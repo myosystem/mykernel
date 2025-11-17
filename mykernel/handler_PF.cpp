@@ -14,28 +14,26 @@ __attribute__((interrupt))
 void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     uint64_t cr2;
     __asm__ __volatile__ ("mov %0, cr2" : "=r"(cr2));
-    if(((cr2 >> 39) & 0x1FF) == 256 && !(error_code & (1ull << 2ull))) {
-		virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
-        memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-		uart_print("on-demand page allocation for ");
-		uart_print_hex(cr2);
-		uart_print("\n");
-	}
-    else  if (((cr2 >> 39) & 0x1FF) == 257 && !(error_code & (1ull << 2ull))) {
-        virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
-        memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-        uart_print("on-demand page allocation for ");
-        uart_print_hex(cr2);
-        uart_print("\n");
+    if (!(error_code & (1ull << 2ull))) {
+        switch ((cr2 >> 39) & 0x1FF)
+        {
+        case 256:
+		case 257:
+		case 258:
+        case 259:
+        {
+            virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
+            memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
+            uart_print("on-demand page allocation for ");
+            uart_print_hex(cr2);
+            uart_print("\n");
+			return;
+        }
+        default:
+            break;
+        }
     }
-    else if (((cr2 >> 39) & 0x1FF) == 258 && !(error_code & (1ull << 2ull))) {
-        virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
-        memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-        uart_print("on-demand page allocation for ");
-        uart_print_hex(cr2);
-        uart_print("\n");
-	}
-    else if (now_process->user_stack_top <= cr2 && cr2 < now_process->user_stack_bottom) {
+    if (now_process->user_stack_top <= cr2 && cr2 < now_process->user_stack_bottom) {
         virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
         memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
         uart_print("on-demand page allocation for ");

@@ -37,15 +37,21 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	}
 	case 3: // getpid
 	{
-		// 현재 프로세스 ID를 반환 (아직 구현 안됨)
-		frame->rax = -1;
+		frame->rax = now_process->process_id; // 반환값: 현재 프로세스 ID
 		break;
 	}
 	case 4: // message
 	{
 		if (frame->rdi == 0) { // send
-			// 아직 구현 안됨
-			frame->rax = -1; // 반환값: 오류
+			const char* msg = (const char*)frame->rsi;
+			uint64_t pid = frame->rdx;
+			Process* target_process = (Process*)(PROCESS_QUEUE_BASE + (sizeof(Process) * pid));
+			if(target_process->state != 1) {
+				frame->rax = -1; // 반환값: 오류 (존재하지 않는 프로세스)
+				break;
+			}
+			target_process->msg_recv(msg, 0);
+			frame->rax = 0; // 반환값: 성공
 		}
 		else if(frame->rdi == 1) { // pop
 			char* out_msg = (char*)frame->rsi;

@@ -8,6 +8,10 @@
 char uart_buf[1000];
 extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame) {
     now_process->kernel_stack = (uint64_t*)frame;
+    //uart_print("now_process:");
+	//uart_print_hex((uint64_t)now_process);
+	//uart_print("\nnext_process:");
+	//uart_print_hex((uint64_t)now_process->next);
     now_process = now_process->next;
     lapic_eoi();
     jmp_process();

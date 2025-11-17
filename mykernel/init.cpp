@@ -19,6 +19,7 @@
 //256 partition data heap
 //257 mmap table heap
 //258 process message queue
+//259 process queue
 //509 mmio
 //510 HHDM
 //511 kernel + bootdata + init stack
@@ -62,12 +63,14 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     init_interrupts();
 	*(char*)(0xFFFF800000000000) = 0; // pml4 페이지 강제 할당(256번째 엔트리)
 	*(char*)(0xFFFF808000000000) = 0; // pml4 페이지 강제 할당(257번째 엔트리)
+	*(char*)(0xFFFF810000000000) = 0; // pml4 페이지 강제 할당(258번째 엔트리)
+	*(char*)(0xFFFF818000000000) = 0; // pml4 페이지 강제 할당(259번째 엔트리)
+
     HBA_MEM* hba = pci_init();
     uint64_t buf_phys = phy_page_allocator->alloc_phy_page() + MMIO_BASE;
 	virt_page_allocator->alloc_virt_page(buf_phys, buf_phys - MMIO_BASE, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
 	memset((void*)buf_phys, 0, PageSize);
     ahci_read(hba->ports + bootinfo->bootdev.port_or_ns, 1, 1, (void*)buf_phys);
-
     FAT32 fs;
 	fs.init(init_gpt(hba->ports, (void*)buf_phys), 0, (void*)buf_phys);
     uint32_t filesize = fs.get_file_size("TASK.O");
@@ -75,10 +78,20 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	uart_print(filesize);
     uart_print("\n");
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
-	fs.read_file("TASK.O", (void*)readbuffer, filesize);
-	bytes_to_hex_string((char*)readbuffer, filesize, testbuf);
-	uart_print(testbuf);
-    Process* process = new ((void*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE)) Process();
+	uint64_t toread = filesize;
+	uint32_t offset = 0;
+    while (toread > 0) {
+        uint32_t chunk = (toread > PageSize) ? PageSize : toread;
+        fs.read_file("TASK.O", (void*)(readbuffer + offset), offset, chunk);
+        toread -= chunk;
+        offset += chunk;
+		uart_print("read ");
+		uart_print(chunk);
+		uart_print(" bytes\n");
+
+	}
+	virt_page_allocator->free_all_low_pages();
+    Process* process = new Process();
     process->init(0x1B, 0x23);
     process->addCode((void*)readbuffer);
 	process->setHeap();

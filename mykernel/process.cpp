@@ -28,7 +28,7 @@ void init_tss(uint64_t kernel_stack_phys, uint64_t ist1_phys) {
         dst[5] = access;
         dst[6] = ((limit >> 16) & 0x0F) | (flags & 0xF0);
         dst[7] = (base >> 24) & 0xFF;
-        };
+    };
 
     // Kernel Code/Data/User Code/Data
     set_desc(&gdt[8 * 1], 0, 0, 0x9A, 0x20); // Kernel code
@@ -128,9 +128,23 @@ void init_process(Process* p) {
     now_process = p;
     now_process->next = now_process;
 }
+void add_process(Process* p) {
+    Process* tail = now_process;
+    while (tail->next != now_process) {
+        tail = tail->next;
+    }
+    tail->next = p;
+    p->next = now_process;
+}
 void jmp_process() {
+    uart_print("now_process addr:");
+	uart_print_hex((uint64_t)now_process);
     tss.rsp0 = now_process->kernel_stack_phys + HHDM_BASE;
     uint64_t now_rsp = (uint64_t)now_process->kernel_stack;
+	uart_print("\nSwitching to process PID ");
+	uart_print(now_process->process_id);
+    uart_print("\nvirt:");
+	uart_print_hex((uint64_t)&virt_page_allocator);
     virt_page_allocator = now_process->pallocator;
     virt_page_allocator->setCr3();
     __asm__ __volatile(
@@ -257,4 +271,30 @@ bool Process::msg_pop(char* out_msg, uint64_t& out_flags) {
     node->flags = 0; // ÇØÁ¦
 	pallocator->phy_allocator->free_phy_page(pallocator->free_virt_page((uint64_t)node & ~0xFFFULL));
     return true;
+}
+uint64_t process_count = 0;
+void* Process::operator new(size_t size) {
+	Process* result = (Process*)PROCESS_QUEUE_BASE;
+	uint64_t index = 0;
+    while (result->state == 1) {
+        result++;
+		index++;
+    }
+	result->state = 1;
+	result->process_id = index;
+	process_count++;
+	uart_print("Process created with PID ");
+	uart_print(index);
+	uart_print("\nAddr ");
+	uart_print_hex((uint64_t)result);
+	uart_print("\n");
+    return result;
+}
+void Process::operator delete(void* ptr) {
+    Process* p = (Process*)ptr;
+    p->state = 0;
+	process_count--;
+}
+uint64_t get_process_count() {
+    return process_count;
 }

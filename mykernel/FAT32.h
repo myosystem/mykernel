@@ -58,6 +58,6 @@ public:
     ~FAT32();
     void init(uint32_t disk_id, uint32_t index, void* buffer);
 	uint32_t get_file_size(const char* filename);
-	void read_file(const char* filename, void* buffer, uint32_t size);
+	void read_file(const char* filename, void* buffer,uint32_t start, uint32_t size);
 };
 #endif

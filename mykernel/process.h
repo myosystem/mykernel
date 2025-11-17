@@ -6,6 +6,7 @@
 
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
 #define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
+#define PROCESS_QUEUE_BASE 0xFFFF818000000000ULL
 
 struct TSS64 {
     uint32_t reserved0;
@@ -57,7 +58,7 @@ struct process_message_node {
 class Process {
 private:
     process_message_node* message_queue_head;
-	process_message_node* message_queue_tail;
+    process_message_node* message_queue_tail;
 public:
     uint64_t cr3;
     uint64_t kernel_stack_phys;
@@ -69,19 +70,25 @@ public:
     uint8_t allocator_buffer[sizeof(VirtPageAllocator)];
     uint64_t code_va_base;
     uint64_t* kernel_stack;
-	uint64_t heap_top;
-	uint64_t heap_bottom;
-	mmap_entry* mmap_table;
+    uint64_t heap_top;
+    uint64_t heap_bottom;
+    mmap_entry* mmap_table;
+    uint64_t process_id;
     Process() = default;
+	~Process() = default;
     void init(uint64_t cs, uint64_t ss);
     void addCode(void* code_addr);
     void setHeap();
-	bool isAddrInMMap(uint64_t va) const;
-	uint64_t mmap(uint64_t size, uint64_t flags);
-	void msg_recv(const char* msg, uint64_t flags);
-	bool msg_pop(char* out_msg, uint64_t& out_flags);
+    bool isAddrInMMap(uint64_t va) const;
+    uint64_t mmap(uint64_t size, uint64_t flags);
+    void msg_recv(const char* msg, uint64_t flags);
+    bool msg_pop(char* out_msg, uint64_t& out_flags);
+    void* operator new(size_t size);
+    void operator delete(void* ptr);
 };
 extern Process* now_process;
 void init_process(Process* p);
 void jmp_process();
+void add_process(Process* p);
+uint64_t get_process_count();
 #endif /*__PROCESS_H__*/
