@@ -21,7 +21,7 @@ struct PartitionInfo {
 extern uint64_t disk_bitmap; // 1 = 사용 중, 0 = 비어있음
 
 static inline uint16_t allocate_disk_id() {
-    for (int i = 0; i < MAX_DISKS; i++) {
+    for (unsigned short i = 0; i < MAX_DISKS; i++) {
         if (!(disk_bitmap & (1ULL << i))) {
             disk_bitmap |= (1ULL << i);
             return i;

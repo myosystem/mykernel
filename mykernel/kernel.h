@@ -1,13 +1,6 @@
 #ifndef __KERNEL_H__
 #define __KERNEL_H__
 
-#ifdef _MSC_VER
-#define NAKED __declspec(naked)
-#define __attribute__(packed)
-#define __asm__ __asm
-#else
-#define NAKED __attribute__((naked))
-#endif
 #include "size.h"
 typedef struct {
     uint8_t  type;       // 1 = AHCI/SATA, 2 = NVMe, 3 = USB MSC ...

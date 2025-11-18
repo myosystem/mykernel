@@ -51,7 +51,7 @@ uint16_t init_gpt(volatile HBA_PORT* port, void* header) {
 	uart_print("\nentries per sector:");
 	uart_print(entries_per_sector);
 
-    for (int i = 0; i < entry_count; i++) {
+    for (unsigned int i = 0; i < entry_count; i++) {
         if (i % entries_per_sector == 0) {
             ahci_read(port, entry_lba + (i / entries_per_sector), 1, header);
         }

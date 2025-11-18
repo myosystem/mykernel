@@ -12,7 +12,7 @@ static uint64_t make_tss_desc0(uint64_t base, uint32_t limit) {
     return (limit & 0xFFFFULL)
         | ((base & 0xFFFFFFFFULL) << 16)
         | (0x89ULL << 40)
-        | (((limit >> 16) & 0xF) << 48)
+        | ((uint64_t)((limit >> 16) & 0xF) << 48)
         | (((base >> 24) & 0xFFULL) << 56);
 }
 __attribute__((optimize("O0"), noinline))

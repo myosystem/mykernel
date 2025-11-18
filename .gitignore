@@ -10,6 +10,7 @@
 *.userosscache
 *.sln.docstates
 *.sln
+*.slnx
 *.bak
 *.o
 *.img

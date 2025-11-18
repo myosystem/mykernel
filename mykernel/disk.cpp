@@ -7,7 +7,7 @@ uint8_t Disk::operator[](uint64_t addr) {
 	addr = addr % 0x1000;
 	if(!ready || page != index) {
 		ahci_read(port, page * (0x1000 / SECTOR_SIZE), 0x1000 / SECTOR_SIZE, buffer);
-		index = page;
+		index = (uint32_t)page;
 		ready = true;
 	}
 	return buffer[addr];

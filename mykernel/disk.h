@@ -6,8 +6,8 @@
 class Disk {
 private:
 	uint32_t index = 0;
-	uint8_t* buffer;
 	volatile HBA_PORT* port;
+	uint8_t* buffer;
 	bool ready = false;
 public:
 	Disk(volatile HBA_PORT* port, uint8_t* buffer);

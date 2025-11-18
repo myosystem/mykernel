@@ -30,7 +30,7 @@ void FAT32::init(uint32_t disk_id, uint32_t index, void* buffer) {
 }
 uint32_t FAT32::get_file_size(const char* filename) {
     uint64_t FAT_start = (first_lba + bpb.ReservedSectorCount) * bpb.BytesPerSector;
-    uint64_t FAT_size = (uint64_t)bpb.FATSize32 * bpb.BytesPerSector;
+    //uint64_t FAT_size = (uint64_t)bpb.FATSize32 * bpb.BytesPerSector;
 
     uint32_t data_start = (first_lba
         + bpb.ReservedSectorCount

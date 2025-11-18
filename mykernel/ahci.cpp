@@ -156,7 +156,7 @@ int ahci_read(volatile HBA_PORT* port, uint64_t lba, uint32_t count, void* mmio_
 
     cmdtbl->prdt_entry[0].dba = (uint32_t)(buf_phys & 0xFFFFFFFF);
     cmdtbl->prdt_entry[0].dbau = (uint32_t)(buf_phys >> 32);
-    cmdtbl->prdt_entry[0].dbc = (count * 512) - 1; // 섹터 수*512 - 1
+    cmdtbl->prdt_entry[0].dbc = ((count * 512u) - 1u) & 0x3FFFFF; // 22비트 마스킹
     cmdtbl->prdt_entry[0].i = 1;                 // 완료 시 인터럽트
 
     // ====== 6. CFIS 작성 (READ DMA EXT) ======

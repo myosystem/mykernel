@@ -148,6 +148,3 @@ void putc(BootInfo* f, int x, int y, char text, uint32_t color, int scale) {
         }
     }
 }
-extern "C" __attribute__((noreturn, noinline)) void console_thread() {
-
-}

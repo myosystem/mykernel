@@ -13,7 +13,7 @@ static uint8_t console[100 * 40] = { 0, }; // 디버깅용 콘솔 버퍼
 __attribute__((interrupt))
 void keyboard_handler(interrupt_frame_t* frame) {
     uint8_t scancode = inb(0x60);
-    for (int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
+    for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
         uint8_t Red = 0;
         uint8_t Green = simple_rand() % 256;
         uint8_t Blue = 255;
@@ -34,7 +34,7 @@ void keyboard_handler(interrupt_frame_t* frame) {
 __attribute__((interrupt))
 void dummy_mouse_handler(interrupt_frame_t* frame) {
     inb(0x60);
-    for (int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
+    for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
         uint8_t Red = 255;
         uint8_t Green = 255;
         uint8_t Blue = 0;
@@ -120,7 +120,7 @@ void none_handler(interrupt_frame_t* frame) {
 }
 __attribute__((interrupt))
 void general_protection_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
-    for (int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
+    for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
         *((uint32_t*)(bootinfo->framebufferAddr) + i) = 0xFFFFFF;
     }
     char raw_stack[8];
@@ -144,7 +144,7 @@ void stack_segment_fault_handler(interrupt_frame_t* frame, uint64_t error_code) 
     bytes_to_hex_string(raw_stack, sizeof(raw_stack), (char*)console);
     console[3 * 9] = 'S';
     console[3 * 9 + 1] = 'S';
-    for (int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
+    for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
         *((uint32_t*)(bootinfo->framebufferAddr) + i) = 0xFFFFFF;
     }
     while (1) {
