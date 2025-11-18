@@ -1,0 +1,21 @@
+#ifndef __PHYSPAGEALLOCATOR__
+#define __PHYSPAGEALLOCATOR__
+#include "util/size.h"
+#define AllocateAnyPages 0
+#define PageSize 4096
+class PhysPageAllocator {
+    private:
+    uint64_t total_pages;
+	uint64_t used_pages;
+	uint64_t* bitmap;
+public:
+    uint64_t alloc_phy_page();
+    void free_phy_page(uint64_t addr);
+    PhysPageAllocator();
+    void init(uint64_t* _bitmap, uint64_t _total_pages);
+    uint64_t get_total_pages() const;
+    uint64_t get_used_pages() const;
+	uint64_t get_free_pages() const;
+};
+
+#endif

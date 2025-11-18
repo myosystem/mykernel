@@ -1,9 +1,0 @@
-#ifndef __ALLOCATOR__
-#define __ALLOCATOR__
-#include "size.h"
-#include "PhysPageAllocator"
-#include "VirtPageAllocator"
-void init_allocators(uint64_t* bitmap, uint64_t total_pages);
-extern PhysPageAllocator* phy_page_allocator;
-extern VirtPageAllocator* virt_page_allocator;
-#endif // __ALLOCATOR__

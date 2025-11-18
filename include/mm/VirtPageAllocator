@@ -1,0 +1,38 @@
+#ifndef __VIRT_PAGE_ALLOCATOR__
+#define __VIRT_PAGE_ALLOCATOR__
+#include "PhysPageAllocator"
+#include "util/size.h"
+#define HHDM_BASE 0xFFFFFF0000000000ULL
+#define MMIO_BASE 0xFFFFFE8000000000ULL
+class VirtPageAllocator {
+private:
+    static inline void invlpg(void* addr);
+    static inline void reload_cr3();
+public:
+    PhysPageAllocator* phy_allocator;
+    static constexpr uint64_t P = 1ull << 0;    // 유효 여뷰
+    static constexpr uint64_t RW = 1ull << 1;   // 쓰기 가능 여부
+    static constexpr uint64_t US = 1ull << 2;   // 사용자 모드 접근 가능 여부
+    static constexpr uint64_t PWT = 1ull << 3;  // 읽을때만 캐시 사용
+    static constexpr uint64_t PCD = 1ull << 4;  // 캐시 사용 안함
+    static constexpr uint64_t A = 1ull << 5;    // 접근됨
+    static constexpr uint64_t D = 1ull << 6;    // 쓰여짐
+    static constexpr uint64_t PS = 1ull << 7;   // 페이지 크기 (4KB / 2MB / 1GB)
+    static constexpr uint64_t G = 1ull << 8;    // 전역 페이지
+
+    static constexpr uint64_t NX = 1ull << 63;
+    VirtPageAllocator();
+    void* pml4; // 커널 가상주소(= HHDM + PML4 물리)로 보관
+    static uint64_t getCr3();
+    void setCr3();
+    void init(PhysPageAllocator* phy_allocator, uint64_t pml4 = 0);
+    uint64_t alloc_virt_page(uint64_t va, uint64_t pa, uint64_t flags);
+    uint64_t alloc_virt_pages(uint64_t va, uint64_t size, uint64_t flags);
+    uint64_t alloc_virt_pages_range(uint64_t va, uint64_t pa, uint64_t size, uint64_t flags);
+    uint64_t free_virt_page(uint64_t va);
+    void free_all_low_pages();
+    void free_virt_pages(uint64_t va, uint64_t size);
+    uint64_t get_mapping(uint64_t va);
+};
+
+#endif // __VIRT_PAGE_ALLOCATOR__
