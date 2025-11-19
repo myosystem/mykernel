@@ -69,7 +69,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
                     putc(bootinfo, x * 1 * 8 + 4, y * 2 * 16 + 4, console[y * 100 + x], 0, 1);
                 }
             }
+            __asm__ __volatile__("hlt");
         }
-        __asm__ __volatile__("hlt");
     }
 }

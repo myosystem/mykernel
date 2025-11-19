@@ -137,14 +137,14 @@ void add_process(Process* p) {
     p->next = now_process;
 }
 void jmp_process() {
-    uart_print("now_process addr:");
-	uart_print_hex((uint64_t)now_process);
+    //uart_print("now_process addr:");
+	//uart_print_hex((uint64_t)now_process);
     tss.rsp0 = now_process->kernel_stack_phys + HHDM_BASE;
     uint64_t now_rsp = (uint64_t)now_process->kernel_stack;
-	uart_print("\nSwitching to process PID ");
-	uart_print(now_process->process_id);
-    uart_print("\nvirt:");
-	uart_print_hex((uint64_t)&virt_page_allocator);
+	//uart_print("\nSwitching to process PID ");
+	//uart_print(now_process->process_id);
+    //uart_print("\nvirt:");
+	//uart_print_hex((uint64_t)&virt_page_allocator);
     virt_page_allocator = now_process->pallocator;
     virt_page_allocator->setCr3();
     __asm__ __volatile(

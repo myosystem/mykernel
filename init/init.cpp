@@ -90,7 +90,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 		uart_print(" bytes\n");
 
 	}
-	virt_page_allocator->free_all_low_pages();
+	//virt_page_allocator->free_all_low_pages();
     Process* process = new Process();
     process->init(0x1B, 0x23);
     process->addCode((void*)readbuffer);
