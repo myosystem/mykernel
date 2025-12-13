@@ -1,7 +1,8 @@
 #ifndef __FAT32_H__
 #define __FAT32_H__
 #include "util/size.h"
-#include "driver/disk.h"
+#include "filesys/file.h"
+#include "filesys/partition.h"
 struct FAT32_BPB {
     uint8_t  jmpBoot[3];        // 점프 명령
     char     OEMName[8];        // OEM 이름
@@ -48,15 +49,18 @@ struct FAT32_DirEntry {
     uint32_t FileSize;
 } __attribute__((packed));
 
-class FAT32 {
+class FAT32 : public Partition {
+private:
+    uint32_t get_next_cluster_from_fat(uint32_t current_cluster);
+    bool find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry);
 public:
     FAT32_BPB bpb;
-    Disk* disk;
-    uint64_t first_lba;
-    FAT32();
+    FAT32(PartitionInfo& pinfo, Partitioner* partitioner);
     ~FAT32();
-    void init(uint32_t disk_id, uint32_t index, void* buffer);
-	uint32_t get_file_size(const char* filename);
-	void read_file(const char* filename, void* buffer,uint32_t start, uint32_t size);
+    void init() override;
+    File* open_file(const char* path, uint64_t base_dir_id) override;
+    int read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint32_t size) override;
+    void list_directory(const char* path) override;
+    void close_file(void* file_handle) override;
 };
 #endif

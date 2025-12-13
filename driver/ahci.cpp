@@ -152,7 +152,7 @@ int ahci_read(volatile HBA_PORT* port, uint64_t lba, uint32_t count, void* mmio_
 
     // ====== 5. Command Table/PRDT ======
     HBA_CMD_TBL* cmdtbl = (HBA_CMD_TBL*)(ct_phys + MMIO_BASE);
-    uint64_t buf_phys = (uint64_t)mmio_based_buf - MMIO_BASE;
+    uint64_t buf_phys = (uint64_t)mmio_based_buf;
 
     cmdtbl->prdt_entry[0].dba = (uint32_t)(buf_phys & 0xFFFFFFFF);
     cmdtbl->prdt_entry[0].dbau = (uint32_t)(buf_phys >> 32);

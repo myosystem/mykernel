@@ -19,10 +19,14 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
 		case 257:
 		case 258:
         case 259:
+		case 260:
+		case 261:
+        case 262:
+        case 263:
         {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
             memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-            uart_print("on-demand page allocation for ");
+            uart_print("kernel heap allocation for ");
             uart_print_hex(cr2);
             uart_print("\n");
 			return;
@@ -34,21 +38,21 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     if (now_process->user_stack_top <= cr2 && cr2 < now_process->user_stack_bottom) {
         virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
         memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-        uart_print("on-demand page allocation for ");
+        uart_print("user stack allocation for ");
         uart_print_hex(cr2);
         uart_print("\n");
     }
     else if (now_process->heap_top <= cr2 && cr2 < now_process->heap_bottom) {
         virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
         memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-        uart_print("on-demand page allocation for ");
+        uart_print("user heap allocation for ");
         uart_print_hex(cr2);
         uart_print("\n");
     }
     else if (now_process->isAddrInMMap(cr2)) {
         virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
         memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
-        uart_print("on-demand page allocation for ");
+        uart_print("user mmap allocation for ");
         uart_print_hex(cr2);
         uart_print("\n");
 	}

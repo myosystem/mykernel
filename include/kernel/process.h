@@ -2,6 +2,7 @@
 #define __PROCESS_H__
 #include "util/size.h"
 #include "mm/allocator"
+#include "filesys/partition.h"
 
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
 #define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
@@ -73,6 +74,7 @@ public:
     uint64_t heap_bottom;
     mmap_entry* mmap_table;
     uint64_t process_id;
+    Partition* current_partition;
     Process() = default;
 	~Process() = default;
     void init(uint64_t cs, uint64_t ss);

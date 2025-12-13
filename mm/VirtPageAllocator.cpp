@@ -150,25 +150,43 @@ uint64_t VirtPageAllocator::free_virt_page(uint64_t va) {
 	return result;
 }
 
+#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL 
+
 void free_pt(VirtPageAllocator* virt, uint64_t* pte_base) {
     for (int i = 0; i < 512; i++) {
+		// identity mapping은 다른곳에서 사용중일 가능성이 있기에 해제하지 않음
+        /*
         if (pte_base[i] & VirtPageAllocator::P) {
-            uint64_t pa = pte_base[i] & ~0xFFFULL;
+            // [수정] ~0xFFF 대신 PTE_ADDR_MASK 사용
+            uint64_t pa = pte_base[i] & PTE_ADDR_MASK;
             virt->phy_allocator->free_phy_page(pa);
             pte_base[i] = 0;
         }
+        */
     }
-	virt->phy_allocator->free_phy_page((uint64_t)pte_base - HHDM_BASE);
+    // 테이블 자체의 물리 주소는 이미 HHDM 변환 전이므로 마스크 불필요할 수 있으나
+    // 안전을 위해 변환 전 주소(pte_base 원본)가 아니라면 주의. 
+    // 여기서는 pte_base 포인터 자체를 물리 주소로 바꿔서 해제하므로 아래 로직은 맞음.
+    virt->phy_allocator->free_phy_page((uint64_t)pte_base - HHDM_BASE);
 }
+
 void free_pd(VirtPageAllocator* virt, uint64_t* pde_base) {
     for (int i = 0; i < 512; i++) {
         if (pde_base[i] & VirtPageAllocator::P) {
-            if (pde_base[i] & VirtPageAllocator::PS) {
-                uint64_t pa = pde_base[i] & ~0x1FFFFFULL;
+            if (pde_base[i] & VirtPageAllocator::PS) { // 2MB Page
+                // [수정] 2MB 페이지는 하위 21비트가 오프셋이므로 마스크 주의
+                // 2MB 페이지의 물리 주소 시작점: (Value & 0x000FFFFFE00000)
+                // 하지만 간단히 PTE_ADDR_MASK & ~0x1FFFFF 해도 됨.
+                // 더 안전하게는:
+                uint64_t pa = (pde_base[i] & PTE_ADDR_MASK);
                 virt->phy_allocator->free_phy_page(pa);
                 pde_base[i] = 0;
-            } else {
-                uint64_t* pt_base = (uint64_t*)(HHDM_BASE + (pde_base[i] & ~0xFFFULL));
+            }
+            else {
+                // [수정] 다음 테이블 주소 계산 시에도 마스크 필수!
+                uint64_t next_table_phys = pde_base[i] & PTE_ADDR_MASK;
+                uint64_t* pt_base = (uint64_t*)(HHDM_BASE + next_table_phys);
+
                 free_pt(virt, pt_base);
                 pde_base[i] = 0;
             }
@@ -176,15 +194,21 @@ void free_pd(VirtPageAllocator* virt, uint64_t* pde_base) {
     }
     virt->phy_allocator->free_phy_page((uint64_t)pde_base - HHDM_BASE);
 }
+
 void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
     for (int i = 0; i < 512; i++) {
         if (pdpte_base[i] & VirtPageAllocator::P) {
-            if (pdpte_base[i] & VirtPageAllocator::PS) {
-                uint64_t pa = pdpte_base[i] & ~0x3FFFFFFFULL;
+            if (pdpte_base[i] & VirtPageAllocator::PS) { // 1GB Page
+                // [수정] 1GB 페이지
+                uint64_t pa = (pdpte_base[i] & PTE_ADDR_MASK);
                 virt->phy_allocator->free_phy_page(pa);
                 pdpte_base[i] = 0;
-            } else {
-                uint64_t* pd_base = (uint64_t*)(HHDM_BASE + (pdpte_base[i] & ~0xFFFULL));
+            }
+            else {
+                // [수정] 다음 테이블 주소 계산
+                uint64_t next_table_phys = pdpte_base[i] & PTE_ADDR_MASK;
+                uint64_t* pd_base = (uint64_t*)(HHDM_BASE + next_table_phys);
+
                 free_pd(virt, pd_base);
                 pdpte_base[i] = 0;
             }
@@ -192,16 +216,25 @@ void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
     }
     virt->phy_allocator->free_phy_page((uint64_t)pdpte_base - HHDM_BASE);
 }
+
 void VirtPageAllocator::free_all_low_pages() {
     _lockv();
-    for(int i = 0; i < 256; i++) {
+    // User Space (0~256 엔트리) 정리
+    for (int i = 0; i < 256; i++) {
         uint64_t* pml4e = (uint64_t*)pml4 + i;
         if (*pml4e & P) {
-            uint64_t* pdpte_base = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL));
+            // [수정] 마스크 적용
+            uint64_t next_table_phys = *pml4e & PTE_ADDR_MASK;
+            uint64_t* pdpte_base = (uint64_t*)(HHDM_BASE + next_table_phys);
+
             free_pdpt(this, pdpte_base);
             *pml4e = 0;
         }
-	}
+    }
+
+    // TLB 플러시 (CR3 재로드)
+    // 주의: 현재 코드가 User 영역 메모리(스택 등)를 쓰고 있다면 여기서 죽습니다.
+    // 커널이 Higher Half에 온전히 올라가 있다면 안전합니다.
     reload_cr3();
     _unlockv();
 }

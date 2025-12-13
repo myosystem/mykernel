@@ -1,20 +1,32 @@
 #include "filesys/FAT32.h"
-#include "filesys/disksid.h"
+#include "driver/disk.h"
 #include "util/size.h"
 #include "util/memory.h"
-#include "driver/ahci.h"
 #include "debug/log.h"
-FAT32::FAT32() = default;
+#include "filesys/partition.h"
+
+#define PATH_SEP '/'
+
+FAT32::FAT32(PartitionInfo& pinfo, Partitioner* partitioner) : Partition(pinfo, partitioner) {
+    flags |= 0b1;
+}
 FAT32::~FAT32() = default;
 
-void FAT32::init(uint32_t disk_id, uint32_t index, void* buffer) {
-	PartitionInfo* p = find_partition(disk_id, index);
-	if (!p) {
-		return;
-	}
-	disk = (Disk*)p->disk;
-    first_lba = p->first_lba;
-	disk->read_bytes(first_lba * 512, &bpb, sizeof(FAT32_BPB));
+void FAT32::init() {
+	partitioner->read((Partitioner::PartitionInfo&)data, 0, &bpb, sizeof(FAT32_BPB));
+    char label[12];
+    memcpy(label, bpb.VolumeLabel, 11);
+    label[11] = 0;
+    for (int i = 10; i >= 0; i--) {
+        if (label[i] == ' ') label[i] = 0;
+        else break;
+    }
+    if (label[0] == 0 || strncmp(label, "NO NAME", 7) == 0) {
+    }
+    else {
+        this->set_alias(label);
+        uart_print("Volume Mounted: "); uart_print(label); uart_print("\n");
+    }
 	uart_print("\nBytes per sector: ");
 	uart_print(bpb.BytesPerSector);
 	uart_print("\nSectors per cluster: ");
@@ -29,152 +41,213 @@ void FAT32::init(uint32_t disk_id, uint32_t index, void* buffer) {
 	uart_print(bpb.RootCluster);
 	uart_print("\n");
 }
-uint32_t FAT32::get_file_size(const char* filename) {
-    uint64_t FAT_start = (first_lba + bpb.ReservedSectorCount) * bpb.BytesPerSector;
-    //uint64_t FAT_size = (uint64_t)bpb.FATSize32 * bpb.BytesPerSector;
 
-    uint32_t data_start = (first_lba
-        + bpb.ReservedSectorCount
-        + ((uint64_t)bpb.NumFATs * bpb.FATSize32)) * bpb.BytesPerSector;
+bool compare_fat_name(const char* src, const char* dst) {
+    char temp_name[14]; // 변환된 이름을 담을 버퍼 "TEST.TXT\0"
+    int t = 0;
 
-    // 루트 디렉토리 시작 LBA
-    uint32_t cluster = bpb.RootCluster;
-    // 한 클러스터 크기
-    uint32_t cluster_size = bpb.SectorsPerCluster * bpb.BytesPerSector;
-
-    // 엔트리 수
-    int entries = cluster_size / sizeof(FAT32_DirEntry);
-    while (cluster < 0x0FFFFFF7) {
-        for (int i = 0; i < entries; i++) {
-            uint64_t entry_addr = (uint64_t)data_start + (cluster - 2ull) * bpb.SectorsPerCluster * bpb.BytesPerSector + i * sizeof(FAT32_DirEntry);
-
-            FAT32_DirEntry e;
-            // 엔트리 한 개씩 직접 채우기
-            disk->read_bytes(entry_addr, &e, sizeof(FAT32_DirEntry));
-
-            if (e.Name[0] == 0x00) break;    // 끝
-            if (e.Name[0] == (char)0xE5) continue; // 삭제됨
-            if (e.Attr == 0x0F) continue;    // LFN 무시
-
-            char name[13] = {0,};
-            int j,k;
-            for (j = 0; j < 8; j++) {
-				if (e.Name[j] == ' ') break;
-                name[j] = e.Name[j];
-            }
-            name[j] = '.';
-            for (k = 0; k < 3; k++) {
-                if (e.ext[k] == ' ') break;
-                name[k + j + 1] = e.ext[k];
-            }
-            name[k + j + 1] = 0;
-            if(strcmp(name, filename) == 0) {
-                return e.FileSize;
-			}
-            /*
-            uart_print("Entry: ");
-            uart_print(name);
-            uart_print("  Size: ");
-            uart_print(e.FileSize);
-            uart_print("\n");
-            uart_print("Attr: ");
-            uart_print(e.Attr);
-            uart_print("\n");
-            uart_print("First cluster: ");
-            uint32_t first_cluster = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
-            uart_print(first_cluster);
-            uart_print("\n\n");
-            */
-        }
-        uint64_t FAT_offset = (uint64_t)cluster * 4;
-        disk->read_bytes(FAT_start + FAT_offset, &cluster, sizeof(cluster));
-        cluster &= 0x0FFFFFFF;
+    // 1. 파일명 부분 (앞 8자리)
+    for (int i = 0; i < 8; i++) {
+        if (src[i] == ' ') break; // 공백 만나면 끝
+        temp_name[t++] = src[i];
     }
-    return 0;
+
+    // 2. 확장자 부분 (뒤 3자리) -> 확장자가 있다면 점(.) 추가
+    if (src[8] != ' ') {
+        temp_name[t++] = '.';
+        for (int i = 8; i < 11; i++) {
+            if (src[i] == ' ') break;
+            temp_name[t++] = src[i];
+        }
+    }
+    temp_name[t] = 0; // Null Terminate
+
+    // 3. 대소문자 무시 비교 (strcasecmp)
+    // 커널에 strcasecmp가 없다면 직접 구현하거나 대문자로 통일해서 비교
+    return !strcasecmp(temp_name, dst);
+}
+uint32_t FAT32::get_next_cluster_from_fat(uint32_t current_cluster) {
+    // 1. 읽으려는 엔트리의 오프셋 계산
+    // FAT 시작 위치 = 예약된 섹터 수 * 섹터 크기
+    // 엔트리 위치 = FAT 시작 위치 + (현재 클러스터 번호 * 4바이트)
+
+    uint64_t fat_offset = (uint64_t)bpb.ReservedSectorCount * bpb.BytesPerSector
+        + (uint64_t)current_cluster * 4;
+
+    uint32_t next_cluster_entry = 0;
+
+    // 2. 4바이트(32비트) 읽기
+    bool success = this->partitioner->read(
+        (Partitioner::PartitionInfo&)this->data,
+        fat_offset,
+        &next_cluster_entry,
+        sizeof(uint32_t)
+    );
+
+    if (!success) {
+        // 읽기 실패 시, 안전하게 EOC(End of Chain) 리턴하여 루프 종료 유도
+        return 0x0FFFFFFF;
+    }
+
+    // 3. 상위 4비트 제거 (FAT32 스펙 필수)
+    // 상위 4비트는 시스템에 따라 다른 용도로 쓰일 수 있어 무시해야 함
+    uint32_t next_cluster = next_cluster_entry & 0x0FFFFFFF;
+
+    // 4. EOC(End of Chain) 확인 및 반환
+    // 0x0FFFFFF8 이상이면 체인의 끝을 의미함
+    return next_cluster;
+}
+bool FAT32::find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry) {
+    uint32_t current_clus = dir_cluster;
+
+    // 디렉토리도 여러 클러스터에 걸쳐 있을 수 있음 (체인 추적)
+    while (current_clus < 0x0FFFFFF8) { // EOC(End of Chain) 체크
+        int entries_per_cluster = this->bpb.BytesPerSector * this->bpb.SectorsPerCluster / 32;
+        uint64_t cluster_offset = (uint64_t)(bpb.ReservedSectorCount
+                                + (uint64_t)bpb.NumFATs * bpb.FATSize32
+                                + (uint64_t)(current_clus - 2) * bpb.SectorsPerCluster)
+                                * bpb.BytesPerSector;
+
+        for (int i = 0; i < entries_per_cluster; i++) {
+            FAT32_DirEntry entry;
+            this->partitioner->read(
+                (Partitioner::PartitionInfo&)this->data,
+                cluster_offset + (i * sizeof(FAT32_DirEntry)), // 오프셋
+                &entry,                                        // 버퍼
+                sizeof(FAT32_DirEntry)                         // 크기(32)
+            );
+            // 빈 엔트리(0x00)면 더 이상 데이터 없음 -> 검색 실패
+            if (entry.Name[0] == 0x00) return false;
+
+            // 삭제된 엔트리(0xE5)는 건너뜀
+            if ((uint8_t)entry.Name[0] == 0xE5) continue;
+
+            // LFN(긴 파일 이름) 및 볼륨 라벨 등은 일단 무시 (필요시 구현)
+            if (entry.Attr == 0x0F) continue;
+
+            // 3. 이름 비교 (8.3 형식 변환 필요하지만 여기선 간단 비교 로직 가정)
+            // 실제로는 "TEXT    TXT" 형태를 "text.txt"와 비교하는 함수 필요
+            if (compare_fat_name(entry.Name, name)) {
+                *out_entry = entry;
+                return true; // 찾았다!
+            }
+        }
+
+        // 3. 다음 클러스터로 이동 (FAT 테이블 조회)
+        current_clus = get_next_cluster_from_fat(current_clus);
+    }
+
+    return false; // 체인 끝까지 뒤졌는데 없음
+}
+File* FAT32::open_file(const char* path, uint64_t base_dir_id) {
+	uint32_t current_cluster = (base_dir_id == 0) ? this->bpb.RootCluster : (uint32_t)base_dir_id;
+    int path_idx = 0;
+    if (path[path_idx] == '/') path_idx++;
+    char name_buf[256];
+    while (path[path_idx] != 0) {
+
+        // 2. 경로 토큰 추출 (예: "usr/bin/vi" -> "usr")
+        int i = 0;
+        while (path[path_idx] != '/' && path[path_idx] != 0) {
+            name_buf[i++] = path[path_idx++];
+        }
+        name_buf[i] = 0;
+
+        // 구분자 건너뛰기
+        if (path[path_idx] == '/') path_idx++;
+
+        // 3. 현재 디렉토리에서 검색
+        FAT32_DirEntry entry;
+        bool found = find_entry(current_cluster, name_buf, &entry);
+
+        if (!found) return nullptr; // 경로가 틀림
+
+        // 4. 경로 끝인가?
+        bool is_last_token = (path[path_idx] == 0);
+
+        if (is_last_token) {
+            // [도착] 
+            if (entry.Attr & 0x10) {
+                // 디렉토리를 open 하려고 함 -> 현재는 nullptr (나중에 opendir 지원)
+                return nullptr;
+            }
+
+            // 파일 발견! -> File 객체 생성
+            // High/Low 클러스터 합치기
+            uint32_t file_clus = ((uint32_t)entry.FstClusHI << 16) | entry.FstClusLO;
+
+            return new File(this, file_clus, entry.FileSize);
+        }
+        else {
+            // [진행 중]
+            if (!(entry.Attr & 0x10)) {
+                // 경로가 남았는데 파일임 (예: text.txt/abc) -> 에러
+                return nullptr;
+            }
+
+            // 다음 디렉토리로 진입
+            current_cluster = ((uint32_t)entry.FstClusHI << 16) | entry.FstClusLO;
+
+            // [FAT32 특이사항] 클러스터 번호 0은 루트를 의미할 수 있으나,
+            // 데이터 영역에서는 보통 2번부터 시작하므로 그대로 씀.
+        }
+    }
+
+    return nullptr; // 빈 경로 등
 }
 
-//start부터 size만큼 읽어서 buffer에 저장
-void FAT32::read_file(const char* filename, void* buffer, uint32_t start, uint32_t size) {
-    if (size == 0) return;
-
-    uint64_t FAT_start = (first_lba + bpb.ReservedSectorCount) * bpb.BytesPerSector;
-    uint32_t data_start = (first_lba
-        + bpb.ReservedSectorCount
-        + ((uint64_t)bpb.NumFATs * bpb.FATSize32)) * bpb.BytesPerSector;
-
-    uint32_t cluster = bpb.RootCluster;
-    uint32_t cluster_size = bpb.SectorsPerCluster * bpb.BytesPerSector;
-    int entries = cluster_size / sizeof(FAT32_DirEntry);
-
-    while (cluster < 0x0FFFFFF7) {
-        for (int i = 0; i < entries; i++) {
-            uint64_t entry_addr = (uint64_t)data_start + (cluster - 2ull) * cluster_size + i * sizeof(FAT32_DirEntry);
-            FAT32_DirEntry e;
-            disk->read_bytes(entry_addr, &e, sizeof(FAT32_DirEntry));
-
-            if (e.Name[0] == 0x00) break;
-            if (e.Name[0] == (char)0xE5) continue;
-            if (e.Attr == 0x0F) continue;
-
-            char name[13] = { 0, };
-            int j, k;
-            for (j = 0; j < 8 && e.Name[j] != ' '; j++) name[j] = e.Name[j];
-            if (e.ext[0] != ' ') {
-                name[j++] = '.';
-                for (k = 0; k < 3 && e.ext[k] != ' '; k++) name[j + k] = e.ext[k];
-            }
-
-            if (strcmp(name, filename) == 0) {
-                uint32_t current_cluster = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
-                if (current_cluster == 0) return; // 파일이지만 데이터가 없는 경우
-
-                // 1. 시작 위치(start)가 있는 클러스터까지 이동
-                uint32_t clusters_to_skip = start / cluster_size;
-                for (uint32_t skip = 0; skip < clusters_to_skip; ++skip) {
-                    if (current_cluster >= 0x0FFFFFF7) { // 파일 끝에 도달
-                        uart_print("Start offset is beyond the end of the file.\n");
-                        return;
-                    }
-                    uint64_t FAT_offset = FAT_start + (uint64_t)current_cluster * 4;
-                    disk->read_bytes(FAT_offset, &current_cluster, sizeof(current_cluster));
-                    current_cluster &= 0x0FFFFFFF;
-                }
-
-                uint32_t remaining_size = size;
-                uint8_t* buf = (uint8_t*)buffer;
-                uint32_t start_in_cluster = start % cluster_size;
-
-                // 2. 데이터 읽기 시작
-                while (remaining_size > 0 && current_cluster < 0x0FFFFFF7) {
-                    uint64_t cluster_addr = (uint64_t)data_start + (current_cluster - 2ull) * cluster_size;
-
-                    // 현재 클러스터에서 읽을 바이트 수 계산
-                    uint32_t bytes_in_cluster = cluster_size - start_in_cluster;
-                    uint32_t to_read = (remaining_size < bytes_in_cluster) ? remaining_size : bytes_in_cluster;
-
-                    // 데이터 읽기
-                    disk->read_bytes(cluster_addr + start_in_cluster, buf, to_read);
-
-                    buf += to_read;
-                    remaining_size -= to_read;
-
-                    // 첫 클러스터 이후에는 오프셋이 0
-                    start_in_cluster = 0;
-
-                    if (remaining_size == 0) break;
-
-                    // 다음 클러스터로 이동
-                    uint64_t FAT_offset = FAT_start + (uint64_t)current_cluster * 4;
-                    disk->read_bytes(FAT_offset, &current_cluster, sizeof(current_cluster));
-                    current_cluster &= 0x0FFFFFFF;
-                }
-                return;
-            }
+int FAT32::read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint32_t size) {
+    uint32_t current_cluster = (uint32_t)start_cluster;
+    uint32_t bytes_per_cluster = bpb.BytesPerSector * bpb.SectorsPerCluster;
+    // 1. 오프셋에 해당하는 클러스터로 이동
+    uint64_t cluster_offset = offset / bytes_per_cluster;
+    uint64_t intra_cluster_offset = offset % bytes_per_cluster;
+    for (uint64_t i = 0; i < cluster_offset; i++) {
+        current_cluster = get_next_cluster_from_fat(current_cluster);
+        if (current_cluster >= 0x0FFFFFF8) {
+            return 0; // EOC 도달, 더 이상 읽을 수 없음
         }
-        // 다음 디렉토리 클러스터로 이동
-        uint64_t FAT_offset = FAT_start + (uint64_t)cluster * 4;
-        disk->read_bytes(FAT_offset, &cluster, sizeof(cluster));
-        cluster &= 0x0FFFFFFF;
     }
-    uart_print("File not found: "); uart_print(filename); uart_print("\n");
+    uint8_t* out_buf = (uint8_t*)buffer;
+    uint32_t total_read = 0;
+    uint64_t data_start_lba = bpb.ReservedSectorCount + (uint64_t)bpb.NumFATs * bpb.FATSize32;
+    while (total_read < size) {
+        // 현재 클러스터의 시작 오프셋 계산
+        uint64_t cluster_start_offset = (data_start_lba + (uint64_t)(current_cluster - 2) * bpb.SectorsPerCluster)
+            * bpb.BytesPerSector;
+        // 읽을 수 있는 최대 크기 계산
+        uint32_t to_read = bytes_per_cluster - intra_cluster_offset;
+        if (to_read > size - total_read) {
+            to_read = size - total_read;
+        }
+        // 데이터 읽기
+        bool success = this->partitioner->read(
+            (Partitioner::PartitionInfo&)this->data,
+            cluster_start_offset + intra_cluster_offset,
+            out_buf + total_read,
+            to_read
+        );
+        if (!success) {
+            break; // 읽기 실패 시 중단
+        }
+        total_read += to_read;
+        intra_cluster_offset = 0; // 이후부터는 클러스터 시작부터 읽음
+		if (total_read >= size) break; // 다 읽음
+        // 다음 클러스터로 이동
+        current_cluster = get_next_cluster_from_fat(current_cluster);
+        if (current_cluster >= 0x0FFFFFF8) {
+            break; // EOC 도달, 더 이상 읽을 수 없음
+        }
+    }
+	if (total_read < size) {
+		memset((uint8_t*)buffer + total_read, 0, size - total_read);
+    }
+	return total_read;
+}
+
+void FAT32::list_directory(const char* path) {
+
+}
+void FAT32::close_file(void* file_handle) {
+
 }

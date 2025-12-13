@@ -20,6 +20,10 @@
 //257 mmap table heap
 //258 process message queue
 //259 process queue
+//260 shared memory info queue
+//261 disk queue
+//262 Partitioner queue
+//263 HANDLE queue
 //509 mmio
 //510 HHDM
 //511 kernel + bootdata + init stack
@@ -65,37 +69,28 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	*(char*)(0xFFFF808000000000) = 0; // pml4 페이지 강제 할당(257번째 엔트리)
 	*(char*)(0xFFFF810000000000) = 0; // pml4 페이지 강제 할당(258번째 엔트리)
 	*(char*)(0xFFFF818000000000) = 0; // pml4 페이지 강제 할당(259번째 엔트리)
+	*(char*)(0xFFFF820000000000) = 0; // pml4 페이지 강제 할당(260번째 엔트리)
+	*(char*)(0xFFFF828000000000) = 0; // pml4 페이지 강제 할당(261번째 엔트리)
+	*(char*)(0xFFFF830000000000) = 0; // pml4 페이지 강제 할당(262번째 엔트리)
+	*(char*)(0xFFFF838000000000) = 0; // pml4 페이지 강제 할당(263번째 엔트리)
 
     HBA_MEM* hba = pci_init();
-    uint64_t buf_phys = phy_page_allocator->alloc_phy_page() + MMIO_BASE;
-	virt_page_allocator->alloc_virt_page(buf_phys, buf_phys - MMIO_BASE, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
-	memset((void*)buf_phys, 0, PageSize);
-    ahci_read(hba->ports + bootinfo->bootdev.port_or_ns, 1, 1, (void*)buf_phys);
-    FAT32 fs;
-	fs.init(init_gpt(hba->ports, (void*)buf_phys), 0, (void*)buf_phys);
-    uint32_t filesize = fs.get_file_size("TASK.O");
-	uart_print("filesize=");
-	uart_print(filesize);
-    uart_print("\n");
+	Disk* maindisk = new Disk(hba->ports + bootinfo->bootdev.port_or_ns);
+	Partitioner* main_partitioner = Partitioner::create_default();
+    main_partitioner->init(maindisk);
+	File* task_file = kernel_open_file("#0/TASK.O");
+    
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
-	uint64_t toread = filesize;
-	uint32_t offset = 0;
-    while (toread > 0) {
-        uint32_t chunk = (toread > PageSize) ? PageSize : toread;
-        fs.read_file("TASK.O", (void*)(readbuffer + offset), offset, chunk);
-        toread -= chunk;
-        offset += chunk;
-		uart_print("read ");
-		uart_print(chunk);
-		uart_print(" bytes\n");
-
-	}
-	//virt_page_allocator->free_all_low_pages();
     Process* process = new Process();
     process->init(0x1B, 0x23);
-    process->addCode((void*)readbuffer);
+    while (task_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
+        process->addCode((void*)readbuffer);                    //읽은 내용 옮기기
+    }
 	process->setHeap();
     init_process(process);
+    delete task_file;
+    phy_page_allocator->free_phy_page(readbuffer - HHDM_BASE);
     uart_print("\ntest\n");
+    virt_page_allocator->free_all_low_pages();
     jmp_process();
 }

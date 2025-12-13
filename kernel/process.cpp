@@ -136,6 +136,7 @@ void add_process(Process* p) {
     tail->next = p;
     p->next = now_process;
 }
+__attribute__((noreturn))
 void jmp_process() {
     //uart_print("now_process addr:");
 	//uart_print_hex((uint64_t)now_process);
@@ -174,8 +175,9 @@ void jmp_process() {
         "pop rax\n\t"
         "iretq\n\t"
         :
-        : [now_rsp]"r"(now_rsp)
+        : [now_rsp]"a"(now_rsp)
     );
+    __builtin_unreachable();
 }
 bool Process::isAddrInMMap(uint64_t va) const {
     mmap_entry* entry = mmap_table;
