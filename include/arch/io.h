@@ -11,6 +11,7 @@ static inline uint8_t inb(uint16_t port) {
     __asm__ __volatile__("in al, dx" : "=a"(ret) : "d"(port));
     return ret;
 }
+
 static inline void outl(uint16_t port, uint32_t val) {
     __asm__ volatile ("out dx, eax" :: "d"(port), "a"(val));
 }
@@ -18,6 +19,15 @@ static inline void outl(uint16_t port, uint32_t val) {
 static inline uint32_t inl(uint16_t port) {
     uint32_t ret;
     __asm__ volatile ("in eax, dx" : "=a"(ret) : "d"(port));
+    return ret;
+}
+
+static inline void outw(uint16_t port, uint16_t val) {
+    __asm__ __volatile__("out dx, ax" :: "a"(val), "d"(port));
+}
+static inline uint16_t inw(uint16_t port) {
+    uint16_t ret;
+    __asm__ __volatile__("in ax, dx" : "=a"(ret) : "d"(port));
     return ret;
 }
 #endif // __IO_H__

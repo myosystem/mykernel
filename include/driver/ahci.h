@@ -1,6 +1,18 @@
 #ifndef __AHCI_H__
 #define __AHCI_H__
 #include "util/size.h"
+#include "driver/disk.h"
+
+#define HBA_PORT_DET_MASK 0x0F
+#define HBA_PORT_DET_PRESENT 0x03
+#define HBA_PORT_IPM_MASK (0x0F << 8)
+#define HBA_PORT_IPM_ACTIVE (0x01 << 8)
+
+#define SATA_SIG_ATAPI 0xEB140101
+#define SATA_SIG_SEMB  0xC33C0101
+#define SATA_SIG_PM    0x96690101
+#define SATA_SIG_SATA  0x00000101
+
 struct HBA_PORT {
     volatile uint32_t clb;
     volatile uint32_t clbu;
@@ -39,8 +51,17 @@ struct HBA_MEM {
     volatile uint8_t  vendor[0x100 - 0xA0];
     volatile HBA_PORT ports[32];
 } __attribute__((packed));
-
-void probe_ports(HBA_MEM* abar);
-int ahci_read(volatile HBA_PORT* port, uint64_t lba, uint32_t count, void* mmio_based_buf);
-int ahci_identify(volatile HBA_PORT* port, void* mmio_based_buf);
+class AHCIDisk : public Disk{
+private:
+    volatile HBA_PORT* port;
+    uint64_t dma_phys_base;
+    uint64_t dma_virt_base;
+    void start_cmd();
+    void stop_cmd();
+public:
+	AHCIDisk(uint8_t bus, uint8_t slot, uint8_t func) : Disk(bus, slot, func) {}
+    ~AHCIDisk();
+    void init() override;
+    int read_sector(uint64_t lba, uint32_t count, void* buf) override;
+};
 #endif /*__AHCI_H__*/

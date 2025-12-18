@@ -12,7 +12,7 @@ typedef unsigned int		uint32_t;
 typedef unsigned long long	uint64_t;
 
 #ifdef _MSC_VER
-//typedef unsigned __int64	size_t;
+typedef unsigned __int64	size_t;
 #else
 typedef unsigned long		size_t;
 #endif

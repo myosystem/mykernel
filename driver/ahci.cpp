@@ -3,19 +3,8 @@
 #include "debug/log.h"
 #include "util/memory.h"
 #include "mm/allocator"
-// SATA device types (sig 레지스터로 판별)
-#define SATA_SIG_ATAPI 0xEB140101
-#define SATA_SIG_SEMB  0xC33C0101
-#define SATA_SIG_PM    0x96690101
-#define SATA_SIG_SATA  0x00000101
+#include "arch/pci.h"
 
-// SSTS 상태 비트
-#define HBA_PORT_DET_MASK 0x0F
-#define HBA_PORT_DET_PRESENT 0x03
-#define HBA_PORT_IPM_MASK (0x0F << 8)
-#define HBA_PORT_IPM_ACTIVE (0x01 << 8)
-
-// 디바이스 타입 판별 함수
 static inline int check_type(volatile HBA_PORT* port) {
     uint32_t ssts = port->ssts;
 
@@ -34,7 +23,6 @@ static inline int check_type(volatile HBA_PORT* port) {
     }
 }
 
-// AHCI 컨트롤러에서 살아있는 포트 찾기
 void probe_ports(HBA_MEM* abar) {
     uint32_t pi = abar->pi;
     for (int i = 0; i < 32; i++) {
@@ -113,95 +101,154 @@ struct HBA_CMD_TBL {
     uint8_t rsv[48];        // Reserved
     HBA_PRDT_ENTRY prdt_entry[1]; // 실제 엔트리는 prdtl 개수만큼
 } __attribute__((packed));
+void AHCIDisk::start_cmd() {
+    // 이미 실행 중이면 리턴
+    if (port->cmd & (1 << 0)) return;
 
-int ahci_read(volatile HBA_PORT* port, uint64_t lba, uint32_t count, void* mmio_based_buf) {
-    // ====== 1. 포트 정지 ======
-    port->cmd &= ~0x1;                  // ST=0
-    while (port->cmd & (1 << 15));      // CR=1 → 클리어될 때까지 대기
+    while (port->cmd & (1 << 15)); // CR(Command List Running)이 꺼질 때까지 대기
 
-    port->cmd &= ~(1 << 4);             // FRE=0
-    while (port->cmd & (1 << 14));      // FR=1 → 클리어될 때까지 대기
+    port->cmd |= (1 << 4);  // FRE=1 (FIS Receive Enable)
+    port->cmd |= (1 << 0);  // ST=1  (Start)
+}
 
-    // ====== 2. Command List/FIS/CT 영역 확보 ======
-    uint64_t mem = phy_page_allocator->alloc_phy_page();
-    virt_page_allocator->alloc_virt_page(
-        mem + MMIO_BASE, mem, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD
-    );
+void AHCIDisk::stop_cmd() {
+    port->cmd &= ~(1 << 0); // ST=0
+    while (port->cmd & (1 << 15)); // CR=0 대기
 
-    uint64_t cl_phys = mem;         // Command List Base (1KB aligned)
-    uint64_t fb_phys = mem + 0x400; // FIS Base (256B aligned)
-    uint64_t ct_phys = mem + 0x800; // Command Table Base (128B aligned)
+    port->cmd &= ~(1 << 4); // FRE=0
+    while (port->cmd & (1 << 14)); // FR=0 대기
+}
+void AHCIDisk::init() {
+    // 1. 부모 클래스(Disk) 로직에 따라 BAR5 주소를 가져옴
+    uint32_t bar5 = pci_read32(pci_bus, pci_slot, pci_func, 0x24);
+    HBA_MEM* abar = (HBA_MEM*)(uint64_t)(bar5 & 0xFFFFFFF0);
 
-    memset((void*)(cl_phys + MMIO_BASE), 0, 1024);  // CLB 전체 클리어
-    memset((void*)(fb_phys + MMIO_BASE), 0, 256);   // FB 전체 클리어
-    memset((void*)(ct_phys + MMIO_BASE), 0, 256);   // CT 초기화
+    // 2. 사용 가능한 포트 찾기 (작성하신 probe_ports 로직 통합)
+    uint32_t pi = abar->pi;
+    int port_idx = -1;
 
-    // ====== 3. 포트 레지스터에 주소 등록 ======
+    for (int i = 0; i < 32; i++) {
+        if (pi & (1 << i)) {
+            uint32_t ssts = abar->ports[i].ssts;
+            uint8_t det = ssts & 0x0F;
+            uint8_t ipm = (ssts >> 8) & 0x0F;
+
+            // 장치가 있고 활성화 상태이며, SATA 디스크(SIG)인 경우
+            if (det == 3 && ipm == 1 && abar->ports[i].sig == SATA_SIG_SATA) {
+                port_idx = i;
+                break; // 첫 번째 디스크만 사용 (멀티 디스크 지원 시 수정 필요)
+            }
+        }
+    }
+
+    if (port_idx == -1) return; // SATA 디스크를 못 찾음
+    this->port = &abar->ports[port_idx];
+
+    // 3. 엔진 정지 (초기화를 위해)
+    stop_cmd();
+
+    // 4. DMA 메모리 할당 (딱 1번만!)
+    // 구조: [Command List 1KB] + [FIS 256B] + [Command Table 256B * 1]
+    // 총 4KB 페이지 하나면 충분합니다.
+    dma_phys_base = phy_page_allocator->alloc_phy_page();
+    dma_virt_base = dma_phys_base + MMIO_BASE; // 커널 매핑 주소라고 가정
+
+    // 페이지 매핑 (PCD=1: Cache Disable 필수!)
+    virt_page_allocator->alloc_virt_page(dma_virt_base, dma_phys_base,
+        VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
+
+    memset((void*)dma_virt_base, 0, 4096);
+
+    // 5. 주소 계산
+    uint64_t cl_phys = dma_phys_base;           // 0 ~ 1024
+    uint64_t fb_phys = dma_phys_base + 1024;    // 1024 ~ 1280
+    uint64_t ct_phys = dma_phys_base + 1280;    // 1280 ~ (Command Table)
+
+    // 6. 포트 레지스터 등록
     port->clb = (uint32_t)(cl_phys & 0xFFFFFFFF);
     port->clbu = (uint32_t)(cl_phys >> 32);
     port->fb = (uint32_t)(fb_phys & 0xFFFFFFFF);
     port->fbu = (uint32_t)(fb_phys >> 32);
 
-    // ====== 4. Command Header 세팅 ======
-    HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)(cl_phys + MMIO_BASE);
-    cmdheader[0].cfl = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // 5 DWORDs
-    cmdheader[0].w = 0;       // 읽기
-    cmdheader[0].prdtl = 1;       // PRDT 엔트리 하나
-    cmdheader[0].ctba = (uint32_t)(ct_phys & 0xFFFFFFFF);
-    cmdheader[0].ctbau = (uint32_t)(ct_phys >> 32);
+    // 7. Command Header 미리 세팅 (Slot 0만 사용)
+    HBA_CMD_HEADER* hdr = (HBA_CMD_HEADER*)(dma_virt_base);
+    hdr[0].ctba = (uint32_t)(ct_phys & 0xFFFFFFFF);
+    hdr[0].ctbau = (uint32_t)(ct_phys >> 32);
+    hdr[0].prdtl = 1; // 기본적으로 1개의 PRDT 사용 (필요시 늘림)
 
-    // ====== 5. Command Table/PRDT ======
-    HBA_CMD_TBL* cmdtbl = (HBA_CMD_TBL*)(ct_phys + MMIO_BASE);
-    uint64_t buf_phys = (uint64_t)mmio_based_buf;
+    // 8. 엔진 시작! (이제 끄지 않음)
+    start_cmd();
+}
+int AHCIDisk::read_sector(uint64_t lba, uint32_t count, void* phys_buf) {
+    if (!port) return -1;
 
-    cmdtbl->prdt_entry[0].dba = (uint32_t)(buf_phys & 0xFFFFFFFF);
-    cmdtbl->prdt_entry[0].dbau = (uint32_t)(buf_phys >> 32);
-    cmdtbl->prdt_entry[0].dbc = ((count * 512u) - 1u) & 0x3FFFFF; // 22비트 마스킹
-    cmdtbl->prdt_entry[0].i = 1;                 // 완료 시 인터럽트
+    // 포트 에러 클리어 (필요 시)
+    port->is = (uint32_t)-1;
 
-    // ====== 6. CFIS 작성 (READ DMA EXT) ======
-    FIS_REG_H2D* cfis = (FIS_REG_H2D*)(&cmdtbl->cfis);
-    memset(cfis, 0, sizeof(FIS_REG_H2D));
+    // 1. 메모리 주소 재계산 (init에서 할당한 영역 사용)
+    // dma_virt_base는 Command List의 시작점
+    HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)(dma_virt_base);
 
-    cfis->fis_type = 0x27;   // Host to Device FIS
-    cfis->c = 1;      // Command
-    cfis->command = 0x25;   // READ DMA EXT (48-bit)
+    // Command Table 위치 (Header 0번이 가리키는 곳)
+    // 구조상 dma_virt_base + 1280 위치임
+    HBA_CMD_TBL* cmdtbl = (HBA_CMD_TBL*)(dma_virt_base + 1280);
 
-    cfis->device = 0xE0;   // LBA 모드 (VMware 호환 안전값)
+    // 2. Command Header 설정 업데이트
+    cmdheader[0].cfl = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // 5
+    cmdheader[0].w = 0; // Read
+    cmdheader[0].c = 1; // Clear Busy on OK
+    cmdheader[0].prdtl = 1; // PRDT 1개만 쓴다고 가정
 
-    // 48-bit LBA
-    cfis->lba0 = (uint8_t)(lba);
-    cfis->lba1 = (uint8_t)(lba >> 8);
-    cfis->lba2 = (uint8_t)(lba >> 16);
-    cfis->lba3 = (uint8_t)(lba >> 24);
-    cfis->lba4 = (uint8_t)(lba >> 32);
-    cfis->lba5 = (uint8_t)(lba >> 40);
+    // 3. Command Table 설정 (PRDT)
+    memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
 
-    // 섹터 수
-    cfis->countl = (uint8_t)(count & 0xFF);
-    cfis->counth = (uint8_t)(count >> 8);
+    cmdtbl->prdt_entry[0].dba = (uint32_t)((uint64_t)phys_buf & 0xFFFFFFFF);
+    cmdtbl->prdt_entry[0].dbau = (uint32_t)((uint64_t)phys_buf >> 32);
+    cmdtbl->prdt_entry[0].dbc = ((count * 512) - 1); // 4MB 이하 전송 시 1개로 충분
+    cmdtbl->prdt_entry[0].i = 1; // 인터럽트
 
-    // ====== 7. 포트 다시 시작 ======
-    port->cmd |= (1 << 4);   // FRE=1
-    port->cmd |= (1 << 0);   // ST=1
+    // 4. FIS 설정 (Command Table 안에 있음)
+    FIS_REG_H2D* cmdfis = (FIS_REG_H2D*)(&cmdtbl->cfis);
 
-    // ====== 8. 명령 실행 ======
-    port->ci = 1 << 0;       // slot 0 실행
+    cmdfis->fis_type = 0x27; // H2D
+    cmdfis->c = 1;           // Command
+    cmdfis->command = 0x25;  // READ DMA EXT (48bit)
+    cmdfis->device = 1 << 6; // LBA Mode
 
-    // ====== 9. 완료 대기 ======
-    while (port->ci & 1);                     // CI 클리어 기다림
-    while (port->tfd & (0x80 | 0x08));        // BSY/DRQ 클리어 기다림
-    /*
-    uart_print("\nis=");
-    uart_print(port->is);
-    uart_print(", tfd=");
-    uart_print(port->tfd);
-    uart_print(", serr=");
-    uart_print_hex(port->serr);
-    uart_print("\n");
-    */
+    cmdfis->lba0 = (uint8_t)lba;
+    cmdfis->lba1 = (uint8_t)(lba >> 8);
+    cmdfis->lba2 = (uint8_t)(lba >> 16);
+    cmdfis->lba3 = (uint8_t)(lba >> 24);
+    cmdfis->lba4 = (uint8_t)(lba >> 32);
+    cmdfis->lba5 = (uint8_t)(lba >> 40);
 
-    return 0;
+    cmdfis->countl = (uint8_t)(count & 0xFF);
+    cmdfis->counth = (uint8_t)(count >> 8);
+
+    // 5. 명령 발행 (Slot 0 비트 설정)
+    // 엔진을 껐다 킬 필요 없이 CI 비트만 올리면 하드웨어가 낚아채감
+    // BSY 확인
+    int spin = 0;
+    while ((port->tfd & (0x80 | 0x08)) && spin < 1000000) { spin++; }
+    if (spin == 1000000) return -2; // 타임아웃
+
+    port->ci = 1; // Slot 0 Issue
+
+    // 6. 완료 대기 (Polling)
+    while (true) {
+        if ((port->ci & 1) == 0) break; // 비트가 0이 되면 완료
+        if (port->is & (1 << 30)) return -3; // 에러 발생 (TFES)
+    }
+
+    return 0; // 성공
+}
+AHCIDisk::~AHCIDisk() {
+    stop_cmd();
+    // 할당한 DMA 페이지 해제
+    if (dma_phys_base) {
+        virt_page_allocator->free_virt_page(dma_virt_base);
+        phy_page_allocator->free_phy_page(dma_phys_base);
+    }
 }
 int ahci_identify(volatile HBA_PORT* port, void* mmio_based_buf) {
     // ====== 1. 포트 정지 ======

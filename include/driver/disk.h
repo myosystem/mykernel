@@ -1,20 +1,23 @@
 #ifndef __DISK_H__
 #define __DISK_H__
 #include "util/size.h"
-#include "driver/ahci.h"
 #define SECTOR_SIZE 512
 #define DISK_QUEUE_BASE 0xFFFF828000000000ULL
+#define DISKSTRUCT_SIZE 0x400
 class Disk {
+protected:
+	uint8_t pci_bus, pci_slot, pci_func;
 private:
 	uint32_t index = 0;
-	volatile HBA_PORT* port;
 	uint32_t disk_id;
 	uint8_t* buffer;
 	bool ready = false;
-	bool state = false;
+	bool state;
 public:
-	Disk(volatile HBA_PORT* port);
-	~Disk();
+	Disk(uint8_t bus, uint8_t slot, uint8_t func);
+	virtual ~Disk();
+	virtual void init();
+	virtual int read_sector(uint64_t lba, uint32_t count, void* buf) = 0;
 	uint8_t operator[](uint64_t addr);
 	void read_bytes(uint64_t addr, void* buf, uint64_t size);
 	void* operator new(size_t size);

@@ -9,28 +9,51 @@
 #define PCI_CONFIG_ADDRESS 0xCF8
 #define PCI_CONFIG_DATA    0xCFC
 
-uint32_t pci_config_read(uint16_t bus, uint16_t slot, uint16_t func, uint16_t offset) {
-	uint32_t address;
-	// Create configuration address as per Figure 1
-	address = (uint32_t)((bus << 16) | (slot << 11) |
-						(func << 8) | (offset & 0xfc) | (1 << 31));
-	// Write out the address
-	outl(PCI_CONFIG_ADDRESS, address);
-	// Read in the data
-	// (offset & 2) * 8) = 0 will choose the first word of the 32 bits register
-	return inl(PCI_CONFIG_DATA);
+static void pci_write_address(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    uint32_t address = (uint32_t)((1 << 31) | // Enable Bit
+        (bus << 16) |
+        (slot << 11) |
+        (func << 8) |
+        (offset & 0xFC)); // 4바이트 정렬
+    outl(PCI_CONFIG_ADDRESS, address);
 }
 
-void pci_config_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
-	uint32_t address;
-	// Create configuration address as per Figure 1
-	address = (uint32_t)((bus << 16) | (slot << 11) |
-						(func << 8) | (offset & 0xfc) | (1 << 31));
-	// Write out the address
-	outl(PCI_CONFIG_ADDRESS, address);
-	// Write the data
-	// (offset & 2) * 8) = 0 will choose the first word of the 32 bits register
-	outl(PCI_CONFIG_DATA, value);
+// ================= READ 함수들 =================
+
+uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    pci_write_address(bus, slot, func, offset);
+    return inl(PCI_CONFIG_DATA);
+}
+
+uint16_t pci_read16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    pci_write_address(bus, slot, func, offset);
+    // 0xCFC + (offset % 4) 주소에서 16비트 읽기
+    return inw(PCI_CONFIG_DATA + (offset & 2));
+}
+
+uint8_t pci_read8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
+    pci_write_address(bus, slot, func, offset);
+    // 0xCFC + (offset % 4) 주소에서 8비트 읽기
+    return inb(PCI_CONFIG_DATA + (offset & 3));
+}
+
+// ================= WRITE 함수들 =================
+
+void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value) {
+    pci_write_address(bus, slot, func, offset);
+    outl(PCI_CONFIG_DATA, value);
+}
+
+void pci_write16(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value) {
+    pci_write_address(bus, slot, func, offset);
+    // 정확히 해당 위치의 16비트만 씀 (나머지 16비트는 건드리지 않음)
+    outw(PCI_CONFIG_DATA + (offset & 2), value);
+}
+
+void pci_write8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t value) {
+    pci_write_address(bus, slot, func, offset);
+    // 정확히 해당 위치의 8비트만 씀
+    outb(PCI_CONFIG_DATA + (offset & 3), value);
 }
 typedef struct {
     uint64_t addr;  // BAR 주소
@@ -41,11 +64,10 @@ typedef struct {
 
 
 static inline uint16_t pci_cmd_read(uint8_t b, uint8_t s, uint8_t f) {
-    return (uint16_t)(pci_config_read(b, s, f, 0x04) & 0xFFFF);
+    return pci_read16(b, s, f, 0x04);
 }
 static inline void pci_cmd_write(uint8_t b, uint8_t s, uint8_t f, uint16_t v) {
-    uint32_t val = (pci_config_read(b, s, f, 0x04) & 0xFFFF0000) | v;
-    pci_config_write32(b, s, f, 0x04, val);
+    pci_write16(b, s, f, 0x04, v);
 }
 
 pci_bar_info_t pci_get_bar_size(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
