@@ -9,9 +9,13 @@ extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame)
 	//uart_print_hex((uint64_t)now_process);
 	//uart_print("\nnext_process:");
 	//uart_print_hex((uint64_t)now_process->next);
-    now_process = now_process->next;
+    add_process(now_process->process_id);
+    if (process_queue->isEmpty()) {
+        __asm__ __volatile__("hlt");
+    }
+    now_process = next_process();
     lapic_eoi();
-    jmp_process();
+    now_process->run_process();
     //uint64_t* ret = (uint64_t*)current;
     //asm volatile("" : "+a"(ret));
     return (uint64_t*)0;

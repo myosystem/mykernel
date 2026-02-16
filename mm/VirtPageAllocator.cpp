@@ -155,14 +155,17 @@ uint64_t VirtPageAllocator::free_virt_page(uint64_t va) {
 void free_pt(VirtPageAllocator* virt, uint64_t* pte_base) {
     for (int i = 0; i < 512; i++) {
 		// identity mapping은 다른곳에서 사용중일 가능성이 있기에 해제하지 않음
-        /*
+        // 페이징을 위한 pdpt등이 identity mapping을 지우는 과정에서 해제되어버림
+        // identity mapping은 phy_allocator에서 사용중이 아닌 페이지로 간주하기때문에 부팅 후 정리시엔 물리 메모리는 해제하지 않음
+        // 하지만 프로세스 종료시에는 identity mapping관련 문제가 생기지 않기에 페이지를 전부 해제해야함
+        
         if (pte_base[i] & VirtPageAllocator::P) {
             // [수정] ~0xFFF 대신 PTE_ADDR_MASK 사용
             uint64_t pa = pte_base[i] & PTE_ADDR_MASK;
             virt->phy_allocator->free_phy_page(pa);
             pte_base[i] = 0;
         }
-        */
+        
     }
     // 테이블 자체의 물리 주소는 이미 HHDM 변환 전이므로 마스크 불필요할 수 있으나
     // 안전을 위해 변환 전 주소(pte_base 원본)가 아니라면 주의. 

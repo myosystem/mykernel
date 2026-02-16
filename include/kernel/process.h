@@ -3,6 +3,7 @@
 #include "util/size.h"
 #include "mm/allocator"
 #include "filesys/partition.h"
+#include "util/queue.h"
 
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
 #define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
@@ -64,7 +65,6 @@ public:
     uint64_t kernel_stack_phys;
     uint64_t user_stack_bottom;
     uint64_t user_stack_top;
-    Process* next;
     uint64_t state; // always 1
     VirtPageAllocator* pallocator;
     uint8_t allocator_buffer[sizeof(VirtPageAllocator)];
@@ -84,12 +84,14 @@ public:
     uint64_t mmap(uint64_t size, uint64_t flags);
     void msg_recv(const char* msg, uint64_t flags);
     bool msg_pop(char* out_msg, uint64_t& out_flags);
+    void run_process();
     void* operator new(size_t size);
     void operator delete(void* ptr);
 };
+extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 수 있도록 확장 필요
 extern Process* now_process;
-void init_process(Process* p);
-void jmp_process();
-void add_process(Process* p);
+void init_process();
+void add_process(size_t process_id);
+Process* next_process();
 uint64_t get_process_count();
 #endif /*__PROCESS_H__*/

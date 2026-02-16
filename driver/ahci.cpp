@@ -121,7 +121,9 @@ void AHCIDisk::stop_cmd() {
 void AHCIDisk::init() {
     // 1. 부모 클래스(Disk) 로직에 따라 BAR5 주소를 가져옴
     uint32_t bar5 = pci_read32(pci_bus, pci_slot, pci_func, 0x24);
-    HBA_MEM* abar = (HBA_MEM*)(uint64_t)(bar5 & 0xFFFFFFF0);
+    HBA_MEM* abar = (HBA_MEM*)((uint64_t)(bar5 & 0xFFFFFFF0) + MMIO_BASE);
+    virt_page_allocator->alloc_virt_page((uint64_t)abar, (uint64_t)abar - MMIO_BASE,
+		VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
 
     // 2. 사용 가능한 포트 찾기 (작성하신 probe_ports 로직 통합)
     uint32_t pi = abar->pi;

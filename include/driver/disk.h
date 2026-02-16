@@ -17,7 +17,7 @@ public:
 	Disk(uint8_t bus, uint8_t slot, uint8_t func);
 	virtual ~Disk();
 	virtual void init();
-	virtual int read_sector(uint64_t lba, uint32_t count, void* buf) = 0;
+	virtual int read_sector(uint64_t lba, uint32_t count, void* buf);
 	uint8_t operator[](uint64_t addr);
 	void read_bytes(uint64_t addr, void* buf, uint64_t size);
 	void* operator new(size_t size);

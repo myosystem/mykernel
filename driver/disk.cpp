@@ -90,3 +90,6 @@ void Disk::operator delete(void* ptr) {
     Disk* p = (Disk*)ptr;
     p->state = 0;
 }
+int Disk::read_sector(uint64_t lba, uint32_t count, void* buf) {
+	return -1; // 기본 Disk는 지원 안 함
+}

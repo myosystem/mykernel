@@ -73,9 +73,11 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	*(char*)(0xFFFF828000000000) = 0; // pml4 페이지 강제 할당(261번째 엔트리)
 	*(char*)(0xFFFF830000000000) = 0; // pml4 페이지 강제 할당(262번째 엔트리)
 	*(char*)(0xFFFF838000000000) = 0; // pml4 페이지 강제 할당(263번째 엔트리)
-
-    HBA_MEM* hba = pci_init();
-	Disk* maindisk = new Disk(hba->ports + bootinfo->bootdev.port_or_ns);
+	Disk* maindisk = new Disk(
+        bootinfo->bootdev.pci_bus,
+        bootinfo->bootdev.pci_slot,
+        bootinfo->bootdev.pci_func);
+	maindisk->init();
 	Partitioner* main_partitioner = Partitioner::create_default();
     main_partitioner->init(maindisk);
 	File* task_file = kernel_open_file("#0/TASK.O");
@@ -87,10 +89,11 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
         process->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
 	process->setHeap();
-    init_process(process);
+    init_process();
+    now_process = process;
     delete task_file;
     phy_page_allocator->free_phy_page(readbuffer - HHDM_BASE);
     uart_print("\ntest\n");
     virt_page_allocator->free_all_low_pages();
-    jmp_process();
+    process->run_process();
 }

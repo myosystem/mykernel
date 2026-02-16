@@ -72,36 +72,40 @@ static inline void pci_cmd_write(uint8_t b, uint8_t s, uint8_t f, uint16_t v) {
 
 pci_bar_info_t pci_get_bar_size(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset) {
     pci_bar_info_t info = { 0 };
-    uint32_t old_low = pci_config_read(bus, slot, func, offset);
+
+    // 1. 기존 값 백업
+    uint32_t old_low = pci_read32(bus, slot, func, offset);
     uint32_t old_high = 0;
 
     int is_io = old_low & 0x1;
-    int is_64 = (!is_io && (old_low & 0x4));  // <-- 여기에 조건 추가
-    if (offset == 0x24) is_64 = 0; // AHCI BAR는 32bit 고정
+    int is_64 = (!is_io && (old_low & 0x4));
 
-    if (is_64) old_high = pci_config_read(bus, slot, func, offset + 4);
+    // AHCI BAR(0x24)는 스펙상 32비트 레지스터로 취급하는 경우가 많음
+    if (offset == 0x24) is_64 = 0;
 
-    // 1) 디코딩 잠시 끄기 (I/O, MEM)
+    if (is_64) old_high = pci_read32(bus, slot, func, offset + 4);
+
+    // 2. 디코딩 잠시 끄기 (Size Probing 안전하게 수행)
     uint16_t cmd_old = pci_cmd_read(bus, slot, func);
     uint16_t cmd_off = cmd_old & ~(uint16_t)(0x1 /*IO*/ | 0x2 /*MEM*/);
     pci_cmd_write(bus, slot, func, cmd_off);
 
-    // 2) 사이징 프로브
-    pci_config_write32(bus, slot, func, offset, 0xFFFFFFFF);
-    if (is_64) pci_config_write32(bus, slot, func, offset + 4, 0xFFFFFFFF);
+    // 3. 0xFFFFFFFF 써서 사이즈 확인 (Sizing)
+    pci_write32(bus, slot, func, offset, 0xFFFFFFFF);
+    if (is_64) pci_write32(bus, slot, func, offset + 4, 0xFFFFFFFF);
 
-    uint32_t val_low = pci_config_read(bus, slot, func, offset);
-    uint32_t val_high = is_64 ? pci_config_read(bus, slot, func, offset + 4) : 0;
+    uint32_t val_low = pci_read32(bus, slot, func, offset);
+    uint32_t val_high = is_64 ? pci_read32(bus, slot, func, offset + 4) : 0;
 
-    // 3) BAR 원복
-    pci_config_write32(bus, slot, func, offset, old_low);
-    if (is_64) pci_config_write32(bus, slot, func, offset + 4, old_high);
+    // 4. BAR 값 원상복구
+    pci_write32(bus, slot, func, offset, old_low);
+    if (is_64) pci_write32(bus, slot, func, offset + 4, old_high);
 
-    // 4) 커맨드 원복 + 이후 사용 위해 MEM/버스마스터 켜기
+    // 5. 커맨드 복구 및 BusMaster/Memory Enable (AHCI 동작 필수)
     uint16_t cmd_on = (uint16_t)(cmd_old | 0x2 /*MEM*/ | 0x4 /*BusMaster*/);
     pci_cmd_write(bus, slot, func, cmd_on);
 
-    // 주소 계산
+    // 6. 주소 계산
     if (is_io) {
         info.addr = old_low & ~0x3ULL;
     }
@@ -111,19 +115,21 @@ pci_bar_info_t pci_get_bar_size(uint8_t bus, uint8_t slot, uint8_t func, uint8_t
         info.addr = addr;
     }
 
-    // 크기 계산
+    // 7. 크기 계산 (Critical Fix 적용됨)
     if (is_io) {
         uint32_t mask = val_low & ~0x3U;
-		uart_print("PCI IO BAR size mask=");
-        info.size = (~mask) + 1ull;
+        info.size = (~mask) + 1; // 32bit inversion
     }
     else {
-        uint64_t mask = ((uint64_t)val_high << 32) | (val_low & ~0xFULL);
         if (is_64) {
+            uint64_t mask = ((uint64_t)val_high << 32) | (val_low & ~0xFULL);
             info.size = (~mask) + 1ull;
         }
         else {
-            info.size = (uint32_t)((~mask) + 1ull);
+            // [중요] 32비트 BAR는 반드시 uint32_t로 반전 후 64비트로 확장해야 함
+            // 안 그러면 상위 32비트가 1로 채워져서 엄청난 크기가 됨
+            uint32_t mask = val_low & ~0xFULL;
+            info.size = (~mask) + 1ull;
         }
     }
 
@@ -131,7 +137,7 @@ pci_bar_info_t pci_get_bar_size(uint8_t bus, uint8_t slot, uint8_t func, uint8_t
     info.is_64 = is_64;
     return info;
 }
-HBA_MEM* pci_init() {
+void* pci_init() {
     /*
     for (int bus = 0; bus < 8; bus++) {
         for (int slot = 0; slot < 32; slot++) {
@@ -169,6 +175,5 @@ HBA_MEM* pci_init() {
         (abar.size + 0xFFF) & ~0xFFFULL,
         VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD
     );
-	probe_ports((HBA_MEM*)(abar.addr + MMIO_BASE));
-    return (HBA_MEM*)(abar.addr + MMIO_BASE);
+    return (void*)(abar.addr + MMIO_BASE);
 }

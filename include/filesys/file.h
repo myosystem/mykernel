@@ -10,7 +10,7 @@ struct PathResolveResult {
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition);
 File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id);
 File* kernel_open_file(const char* path);
-class File : public SharedItem {
+class File : public Handle {
 private:
 	Partition* partition;
 	uint64_t file_size;
@@ -18,14 +18,14 @@ private:
 	uint64_t start_cluster;
 public:
 	File(Partition* part, uint64_t start_cluster, uint64_t size)
-		: SharedItem(), partition(part), file_size(size), current_offset(0), start_cluster(start_cluster) {
+		: Handle(), partition(part), file_size(size), current_offset(0), start_cluster(start_cluster) {
 	}
 	virtual ~File() {}
-	int read(void* buf, uint32_t len) override;
-	int write(const void* buf, uint32_t len) override;
+	int read(void* buf, uint32_t len);
+	int write(const void* buf, uint32_t len);
 	int seek(uint64_t offset);
 	uint64_t tell();
 	uint64_t size();
-	void close() override;
+	void close();
 };
 #endif // __FILE_H__

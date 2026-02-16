@@ -85,6 +85,8 @@ void init_tss(uint64_t kernel_stack_phys, uint64_t ist1_phys) {
     uint16_t tss_sel = 0x28;
     asm volatile("ltr %0" : : "m"(tss_sel));
 }
+queue<size_t>* process_queue;
+uint8_t* process_queue_buf[sizeof(queue<size_t>)];
 Process* now_process = 0;
 void Process::init(uint64_t cs, uint64_t ss) {
     code_va_base = 0x400000;
@@ -109,7 +111,6 @@ void Process::init(uint64_t cs, uint64_t ss) {
     for (int i = 0; i < 4; i++) {
         *(--kernel_stack) = ss;
     }
-    next = 0;
     state = 1;
 	message_queue_head = nullptr;
 	message_queue_tail = nullptr;
@@ -124,29 +125,31 @@ void Process::setHeap() {
     heap_bottom = code_va_base;
 	heap_top = code_va_base;    // 힙은 비어있는 상태로 시작
 }
-void init_process(Process* p) {
-    now_process = p;
-    now_process->next = now_process;
+void init_process() {
+    process_queue = new (process_queue_buf) queue<size_t>();
 }
-void add_process(Process* p) {
-    Process* tail = now_process;
-    while (tail->next != now_process) {
-        tail = tail->next;
+void add_process(size_t index) {
+    process_queue->enqueue(index);
+}
+Process* next_process() {
+    int index = process_queue->dequeue();
+    Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
+    if ((result->state & 0b1) == 0) {
+        uart_print("error!!");
     }
-    tail->next = p;
-    p->next = now_process;
+    return result;
 }
 __attribute__((noreturn))
-void jmp_process() {
+void Process::run_process() {
     //uart_print("now_process addr:");
 	//uart_print_hex((uint64_t)now_process);
-    tss.rsp0 = now_process->kernel_stack_phys + HHDM_BASE;
-    uint64_t now_rsp = (uint64_t)now_process->kernel_stack;
+    tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
+    uint64_t now_rsp = (uint64_t)this->kernel_stack;
 	//uart_print("\nSwitching to process PID ");
-	//uart_print(now_process->process_id);
+	//uart_print(this->process_id);
     //uart_print("\nvirt:");
 	//uart_print_hex((uint64_t)&virt_page_allocator);
-    virt_page_allocator = now_process->pallocator;
+    virt_page_allocator = this->pallocator;
     virt_page_allocator->setCr3();
     __asm__ __volatile(
         "mov rsp, %[now_rsp]\n\t"
