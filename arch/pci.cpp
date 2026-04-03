@@ -55,12 +55,6 @@ void pci_write8(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint8_t
     // 정확히 해당 위치의 8비트만 씀
     outb(PCI_CONFIG_DATA + (offset & 3), value);
 }
-typedef struct {
-    uint64_t addr;  // BAR 주소
-    uint64_t size;  // BAR 크기
-    int is_mmio;    // 1 = MMIO, 0 = I/O
-    int is_64;      // 1 = 64-bit BAR
-} pci_bar_info_t;
 
 
 static inline uint16_t pci_cmd_read(uint8_t b, uint8_t s, uint8_t f) {
@@ -137,11 +131,11 @@ pci_bar_info_t pci_get_bar_size(uint8_t bus, uint8_t slot, uint8_t func, uint8_t
     info.is_64 = is_64;
     return info;
 }
+//vector<pci_device_t> pci_devices;
 void* pci_init() {
-    /*
-    for (int bus = 0; bus < 8; bus++) {
+    for (int bus = 0; bus < 255; bus++) {
         for (int slot = 0; slot < 32; slot++) {
-            uint32_t vendor_dev = pci_config_read(bus, slot, 0, 0x00);
+            uint32_t vendor_dev = pci_read32(bus, slot, 0, 0x00);
             if (vendor_dev != 0xFFFFFFFF) {
                 uint16_t vendor_id = vendor_dev & 0xFFFF;
                 uint16_t device_id = (vendor_dev >> 16) & 0xFFFF;
@@ -157,7 +151,6 @@ void* pci_init() {
             }
         }
     }
-    */
     auto abar = pci_get_bar_size(
         bootinfo->bootdev.pci_bus,
         bootinfo->bootdev.pci_slot,

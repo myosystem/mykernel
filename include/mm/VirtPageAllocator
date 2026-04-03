@@ -4,6 +4,7 @@
 #include "util/size.h"
 #define HHDM_BASE 0xFFFFFF0000000000ULL
 #define MMIO_BASE 0xFFFFFE8000000000ULL
+extern uint64_t mmio_bump;
 class VirtPageAllocator {
 private:
     static inline void invlpg(void* addr);

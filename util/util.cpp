@@ -7,3 +7,10 @@ void simple_hlt() {
         "jmp simple_hlt\n\t"
     );
 }
+__attribute__((naked, noinline))
+unsigned long long call_xhci(...) {
+    __asm__ __volatile__(
+        "int 0x81\n\t"
+        "ret\n\t"
+    );
+}

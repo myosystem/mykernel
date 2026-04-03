@@ -122,3 +122,17 @@ File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id) {
 File* kernel_open_file(const char* path) {
     return vfs_open(path, nullptr, 0);
 }
+void* File::operator new(size_t size) {
+    File* result = (File*)FILE_QUEUE_BASE;
+    uint64_t index = 0;
+    while (result->state == 1) {
+        result++;
+        index++;
+    }
+    result->state = 1;
+    return result;
+}
+void File::operator delete(void* ptr) {
+    File* p = (File*)ptr;
+    p->state = 0;
+}

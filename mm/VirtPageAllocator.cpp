@@ -2,6 +2,7 @@
 #include "util/memory.h"
 #include "debug/log.h"
 volatile uint32_t vpaspinv = 0;
+uint64_t mmio_bump = MMIO_BASE + 0x100000000ULL;
 inline void _lockv() {
     while (__atomic_test_and_set(&vpaspinv, __ATOMIC_ACQUIRE)) {
         __asm__ __volatile__("pause");
@@ -35,14 +36,17 @@ void VirtPageAllocator::init(PhysPageAllocator* phy_allocator, uint64_t pml4) {
         pml4 += HHDM_BASE;
     }
     this->pml4 = (void*)pml4;
+	uart_print("VirtPageAllocator initialized with Cr3 at 0x");
+	uart_print_hex(VirtPageAllocator::getCr3());
+	uart_print("\n");
 }
 uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t flags) {
     if ((va & 0xFFF) || (pa & 0xFFF)) return ~0ULL; // 정렬 불량
-    uart_print("va\n0x");
-    uart_print_hex(va);
-    uart_print("\n0x");
-    uart_print_hex(pa);
-    uart_print("\n");
+    //uart_print("va\n0x");
+    //uart_print_hex(va);
+    //uart_print("\n0x");
+    //uart_print_hex(pa);
+    //uart_print("\n");
     _lockv();
     if (va == pa) {
         uart_print("identical mapping\n");
@@ -100,7 +104,7 @@ uint64_t VirtPageAllocator::alloc_virt_pages(uint64_t va, uint64_t size, uint64_
 		uint64_t pa = phy_allocator->alloc_phy_page();
         if (alloc_virt_page(va + i * 4096, pa, flags) == ~0ULL) {
             // 실패 시 지금까지 할당된 페이지 해제
-            phy_allocator->free_phy_page(pa);
+            phy_allocator->put_page(pa);
             uart_print("error!!\n");
             free_virt_pages(va, i * 4096);
             return ~0ULL;
@@ -162,7 +166,7 @@ void free_pt(VirtPageAllocator* virt, uint64_t* pte_base) {
         if (pte_base[i] & VirtPageAllocator::P) {
             // [수정] ~0xFFF 대신 PTE_ADDR_MASK 사용
             uint64_t pa = pte_base[i] & PTE_ADDR_MASK;
-            virt->phy_allocator->free_phy_page(pa);
+            virt->phy_allocator->put_page(pa);
             pte_base[i] = 0;
         }
         
@@ -170,7 +174,7 @@ void free_pt(VirtPageAllocator* virt, uint64_t* pte_base) {
     // 테이블 자체의 물리 주소는 이미 HHDM 변환 전이므로 마스크 불필요할 수 있으나
     // 안전을 위해 변환 전 주소(pte_base 원본)가 아니라면 주의. 
     // 여기서는 pte_base 포인터 자체를 물리 주소로 바꿔서 해제하므로 아래 로직은 맞음.
-    virt->phy_allocator->free_phy_page((uint64_t)pte_base - HHDM_BASE);
+    virt->phy_allocator->put_page((uint64_t)pte_base - HHDM_BASE);
 }
 
 void free_pd(VirtPageAllocator* virt, uint64_t* pde_base) {
@@ -182,7 +186,7 @@ void free_pd(VirtPageAllocator* virt, uint64_t* pde_base) {
                 // 하지만 간단히 PTE_ADDR_MASK & ~0x1FFFFF 해도 됨.
                 // 더 안전하게는:
                 uint64_t pa = (pde_base[i] & PTE_ADDR_MASK);
-                virt->phy_allocator->free_phy_page(pa);
+                virt->phy_allocator->put_page(pa);
                 pde_base[i] = 0;
             }
             else {
@@ -195,7 +199,7 @@ void free_pd(VirtPageAllocator* virt, uint64_t* pde_base) {
             }
         }
     }
-    virt->phy_allocator->free_phy_page((uint64_t)pde_base - HHDM_BASE);
+    virt->phy_allocator->put_page((uint64_t)pde_base - HHDM_BASE);
 }
 
 void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
@@ -204,7 +208,7 @@ void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
             if (pdpte_base[i] & VirtPageAllocator::PS) { // 1GB Page
                 // [수정] 1GB 페이지
                 uint64_t pa = (pdpte_base[i] & PTE_ADDR_MASK);
-                virt->phy_allocator->free_phy_page(pa);
+                virt->phy_allocator->put_page(pa);
                 pdpte_base[i] = 0;
             }
             else {
@@ -217,7 +221,7 @@ void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
             }
         }
     }
-    virt->phy_allocator->free_phy_page((uint64_t)pdpte_base - HHDM_BASE);
+    virt->phy_allocator->put_page((uint64_t)pdpte_base - HHDM_BASE);
 }
 
 void VirtPageAllocator::free_all_low_pages() {
@@ -228,6 +232,7 @@ void VirtPageAllocator::free_all_low_pages() {
         if (*pml4e & P) {
             // [수정] 마스크 적용
             uint64_t next_table_phys = *pml4e & PTE_ADDR_MASK;
+
             uint64_t* pdpte_base = (uint64_t*)(HHDM_BASE + next_table_phys);
 
             free_pdpt(this, pdpte_base);
@@ -245,7 +250,7 @@ void VirtPageAllocator::free_virt_pages(uint64_t va, uint64_t size) {
     if (va & 0xFFF || size & 0xFFF) return; // 정렬 불량
     uint64_t pages = (size + 4095) / 4096;
     for (uint64_t i = 0; i < pages; i++) {
-        phy_allocator->free_phy_page(free_virt_page(va + i * 4096));
+        phy_allocator->put_page(free_virt_page(va + i * 4096));
     }
 }
 

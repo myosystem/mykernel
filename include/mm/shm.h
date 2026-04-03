@@ -2,29 +2,30 @@
 #define __SHAREDMEM_H__
 #include "util/size.h"
 #include "mm/allocator"
-#include "kernel/handle.h"
+#include "util/vector.h"
 #define SHM_NAME_MAX_LEN 64
-typedef struct IndexPage {
-	struct IndexPage* next;
-	uint64_t pages[PageSize / sizeof(uint64_t) - 1];
-}__attribute__((packed)) IndexPage;
-
-class SharedMem : public Handle {
+#define SHARED_MEM_QUEUE_BASE 0xFFFF820000000000ULL
+class SharedMem {
 private:
-	char name[SHM_NAME_MAX_LEN];
-	uint32_t id;
-	uint64_t size;
-	uint32_t page_count;
-	IndexPage* index_page_head;
-	bool is_unlinked;
-	int owner_pid;
-	int ref_count;
-	bool state;
-	
-	volatile uint32_t shm_lock = 0;
-	SharedMem* next;
+    uint64_t id;
+    uint64_t size;
+    uint64_t page_count;
+    bool is_unlinked;
+    uint64_t owner_pid;
+    uint64_t ref_count;
+    uint64_t state;
+    
+    volatile uint32_t shm_lock = 0;
 public:
-	SharedMem() = default;
-	~SharedMem() = default;
+    SharedMem(uint64_t owner_pid, uint64_t size);
+    ~SharedMem();
+    vector<uint64_t> phy_pages; // 실제 물리 페이지 주소들
+
+    void* operator new(size_t size);
+    void operator delete(void* ptr);
+	uint64_t get_id() const { return id; }
+	uint64_t get_size() const { return size; }
+	friend SharedMem* get_shared_mem(uint64_t id);
 };
+SharedMem* get_shared_mem(uint64_t id);
 #endif // __SHAREDMEM_H__

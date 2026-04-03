@@ -1,6 +1,10 @@
 #include "debug/log.h"
 #include "arch/io.h"
+#include "kernel/kernel.h"
+#include "kernel/console.h"
 #define COM1 0x3F8
+static uint8_t console[200 * 80] = { 0, }; // 디버깅용 콘솔 버퍼
+uint64_t cursor_pos = 0;
 void uart_init() {
     outb(COM1 + 1, 0x00);    // Disable interrupts
     outb(COM1 + 3, 0x80);    // Enable DLAB
@@ -9,6 +13,10 @@ void uart_init() {
     outb(COM1 + 3, 0x03);    // 8 bits, no parity, one stop
     outb(COM1 + 2, 0xC7);    // Enable FIFO
     outb(COM1 + 4, 0x0B);    // IRQs enabled, RTS/DSR set
+    for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
+        uint32_t PixelColor = 0xFFFFFF;
+        *((uint32_t*)(bootinfo->framebufferAddr) + i) = PixelColor;
+    }
 }
 
 int uart_is_transmit_empty() {
@@ -18,6 +26,22 @@ int uart_is_transmit_empty() {
 void uart_putc(char c) {
     while (!uart_is_transmit_empty());
     outb(COM1, c);
+	//console[cursor_pos++ % (200 * 80)] = c; // 콘솔 버퍼에 저장
+    //for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
+    //    uint32_t PixelColor = 0xFFFFFF;
+    //    *((uint32_t*)(bootinfo->framebufferAddr) + i) = PixelColor;
+    //}
+    if (c == '\r') {
+        cursor_pos -= (cursor_pos % 200); // 커서를 현재 줄의 시작으로 이동
+    }
+    else if (c == '\n') {
+        cursor_pos += (200 - (cursor_pos % 200)); // 커서를 다음 줄의 시작으로 이동
+    }
+    putc(bootinfo, (cursor_pos % 200) * 1 * 8 + 4, (cursor_pos / 200) * 2 * 10 + 4, c, 0, 1);
+    cursor_pos++;
+	if (cursor_pos >= 200 * 25) {
+        cursor_pos = 0; // 화면이 가득 차면 다시 처음으로
+    }
 }
 
 void uart_print(const char* s) {
@@ -77,6 +101,10 @@ void uart_print(uint64_t n) {
     }
 }
 void uart_print_hex(uint64_t n) {
+	if (n == 0) {
+        uart_putc('0');
+        return;
+    }
     const char* hex_digits = "0123456789ABCDEF";
     char buf[16];
     int i = 0;

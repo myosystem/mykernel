@@ -132,7 +132,7 @@ unsigned char font8x8_basic[128][8] = {
 };
 
 void putc(BootInfo* f, int x, int y, char text, uint32_t color, int scale) {
-    uart_putc(text);
+    //uart_putc(text);
     auto* fb = reinterpret_cast<volatile uint32_t*>((uint64_t)f->framebufferAddr);
     if (text < 32 || text > 127) return;
     for (int row = 0; row < 8; row++) {
@@ -144,6 +144,13 @@ void putc(BootInfo* f, int x, int y, char text, uint32_t color, int scale) {
                         fb[(int)f->framebufferPitch * (y + row * scale * 2 + y_offset) + (x + col * scale + x_offset)] = color;
                     }
                 }
+            }
+            else {
+                for (int y_offset = 0; y_offset < scale * 2; y_offset++) {
+                    for (int x_offset = 0; x_offset < scale; x_offset++) {
+                        fb[(int)f->framebufferPitch * (y + row * scale * 2 + y_offset) + (x + col * scale + x_offset)] = ~color;
+                    }
+				}
             }
         }
     }

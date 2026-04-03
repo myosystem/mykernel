@@ -16,10 +16,13 @@ typedef struct {
     uint32_t framebufferPitch;
     uint32_t framebufferFormat;
     uint64_t* physbm;
+	uint64_t* refcount;
     uint64_t physbm_size;
     void* rsdp;
     boot_device_info_t bootdev;
 } BootInfo;
+extern volatile int cursor_x;
+extern volatile int cursor_y;
 #define BOOTINFO_VA   0xFFFFFFFF00200000ull
 #define bootinfo ((BootInfo*)BOOTINFO_VA)
 #endif /* __KERNEL_H__ */

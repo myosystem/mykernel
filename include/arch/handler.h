@@ -10,11 +10,12 @@ typedef struct interrupt_frame {
 } __attribute__((packed)) interrupt_frame_t;
 
 __attribute__((interrupt))  void keyboard_handler(interrupt_frame_t* frame);
-__attribute__((interrupt))  void dummy_mouse_handler(interrupt_frame_t* frame);
+__attribute__((interrupt))  void mouse_handler(interrupt_frame_t* frame);
 __attribute__((naked))      void timer_handler();
 __attribute__((interrupt))  void none_handler(interrupt_frame_t* frame);
 __attribute__((interrupt))  void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code);
 __attribute__((interrupt))  void general_protection_fault_handler(interrupt_frame_t* frame, uint64_t error_code);
 __attribute__((interrupt))  void stack_segment_fault_handler(interrupt_frame_t* frame, uint64_t error_code);
 __attribute__((naked))      void syscall_idthandler();
+__attribute__((naked))      void waiting_idthandler();
 #endif // __HANDLER_H__

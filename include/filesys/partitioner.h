@@ -27,6 +27,7 @@ public:
 	static void* operator new(size_t size) noexcept {
 		if (size > PARTITIONER_SLOT_SIZE) return nullptr;
 		uint64_t addr = PARTITIONER_QUEUE_BASE;
+		addr += PARTITIONER_SLOT_SIZE; //0번 파티션은 부트
 		while ((((Partitioner*)addr)->flags & 0x1) != 0) {
 			addr += PARTITIONER_SLOT_SIZE;
 		}

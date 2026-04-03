@@ -166,6 +166,18 @@ int strcasecmp(const char* s1, const char* s2) {
 
     return c1 - c2;
 }
+void* strncpy(char* dest, const char* src, unsigned long long n) {
+    char* d = dest;
+    const char* s = src;
+    while (n-- && (*d++ = *s++)) {
+        // 복사하면서 NULL 문자 만나면 종료
+    }
+    // 남은 공간을 NULL로 채움
+    while (n--) {
+        *d++ = '\0';
+    }
+    return dest;
+}
 /*
 void* memcpy(void* dest, const void* src, unsigned long long size) {
     unsigned char* d = (unsigned char*)dest;

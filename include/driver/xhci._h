@@ -1,0 +1,91 @@
+#ifndef __XHCI_H__
+#define __XHCI_H__
+#include "driver/disk.h"
+#include "arch/xhci_c.h"
+
+// ─────────────────────────────────────────────────────────────
+//  BOT (Bulk-Only Transport) 구조체
+// ─────────────────────────────────────────────────────────────
+
+// CBW – Command Block Wrapper  (31 bytes, little-endian)
+struct __attribute__((packed)) BOT_CBW {
+    uint32_t dCBWSignature;         // 0x43425355 ("USBC")
+    uint32_t dCBWTag;               // 호스트가 붙이는 태그 (임의)
+    uint32_t dCBWDataTransferLength;
+    uint8_t  bmCBWFlags;            // 0x80 = IN(Device→Host), 0x00 = OUT
+    uint8_t  bCBWLUN;               // LUN (보통 0)
+    uint8_t  bCBWCBLength;          // CDB 길이 (1~16)
+    uint8_t  CBWCB[16];             // SCSI Command Descriptor Block
+};
+
+// CSW – Command Status Wrapper  (13 bytes)
+struct __attribute__((packed)) BOT_CSW {
+    uint32_t dCSWSignature;         // 0x53425355 ("USBS")
+    uint32_t dCSWTag;               // CBW의 태그와 동일해야 함
+    uint32_t dCSWDataResidue;       // 전송 못한 바이트 수
+    uint8_t  bCSWStatus;            // 0=Good, 1=Failed, 2=Phase Error
+};
+
+#define BOT_CBW_SIGNATURE   0x43425355u
+#define BOT_CSW_SIGNATURE   0x53425355u
+#define BOT_CSW_GOOD        0
+#define BOT_CSW_FAILED      1
+#define BOT_CSW_PHASE_ERR   2
+
+// ─────────────────────────────────────────────────────────────
+//  SCSI 명령 (최소 집합)
+// ─────────────────────────────────────────────────────────────
+#define SCSI_TEST_UNIT_READY    0x00
+#define SCSI_REQUEST_SENSE      0x03
+#define SCSI_INQUIRY            0x12
+#define SCSI_READ_CAPACITY10    0x25
+#define SCSI_READ10             0x28
+#define SCSI_WRITE10            0x2A
+
+// ─────────────────────────────────────────────────────────────
+//  USBMSCDisk : Disk를 상속, XHCI+BOT로 섹터 I/O 수행
+// ─────────────────────────────────────────────────────────────
+class XHCIController;   // 전방 선언
+
+class USBMSCDisk : public Disk {
+public:
+    // XHCIController가 디바이스 열거 후 직접 생성
+    USBMSCDisk(XHCIController* ctrl, USBDevice* dev,
+        uint16_t bus, uint16_t slot_pci, uint16_t func);
+    ~USBMSCDisk() override;
+
+    void init()         override;
+    int  read_sector(uint64_t lba, uint32_t count, void* buf)        override;
+    int  write_sector(uint64_t lba, uint32_t count, const void* buf)  override;
+
+    // 디스크 용량 (섹터 수, 섹터 크기)
+    uint64_t total_sectors = 0;
+    uint32_t sector_size = 512;
+
+private:
+    XHCIController* xhci;
+    USBDevice* usb_dev;
+    uint32_t        tag_counter = 1;    // CBW 태그 (단조 증가)
+
+    // 물리 메모리 페이지 (CBW/CSW용 – 항상 동일 페이지 재사용)
+    uint64_t cbw_phys, cbw_virt;
+    uint64_t csw_phys, csw_virt;
+    // 임시 데이터 버퍼 (4KiB – Inquiry/ReadCapacity 응답 등)
+    uint64_t tmp_phys, tmp_virt;
+
+    // ── BOT 헬퍼 ────────────────────────────────────────────
+    // CDB를 BOT 프로토콜로 감싸 전송하고 CSW를 받아 status 반환
+    // data_phys: 데이터 페이로드의 물리 주소 (없으면 0)
+    // data_len : 페이로드 크기 (없으면 0)
+    // is_in    : true=Device→Host, false=Host→Device
+    int bot_transfer(const uint8_t* cdb, uint8_t cdb_len,
+        uint64_t data_phys, uint32_t data_len, bool is_in);
+
+    // ── SCSI 래퍼 ───────────────────────────────────────────
+    bool scsi_test_unit_ready();
+    bool scsi_read_capacity(uint64_t& sectors_out, uint32_t& block_size_out);
+    int  scsi_read10(uint64_t lba, uint16_t count, uint64_t phys_buf);
+    int  scsi_write10(uint64_t lba, uint16_t count, uint64_t phys_buf);
+};
+
+#endif // __XHCI_H__

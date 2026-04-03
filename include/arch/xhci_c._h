@@ -1,0 +1,364 @@
+#ifndef __XHCI_C_H__
+#define __XHCI_C_H__
+#include "util/size.h"
+#include "arch/pci.h"
+#include "arch/controller.h"
+
+// ─────────────────────────────────────────────────────────────
+//  XHCI 레지스터 오프셋  (Host Controller Capability Registers)
+// ─────────────────────────────────────────────────────────────
+#define XHCI_CAPLENGTH      0x00   // Capability Register Length (1B)
+#define XHCI_HCIVERSION     0x02   // Interface Version Number  (2B)
+#define XHCI_HCSPARAMS1     0x04   // Structural Parameters 1   (4B)
+#define XHCI_HCSPARAMS2     0x08   // Structural Parameters 2   (4B)
+#define XHCI_HCCPARAMS1     0x10   // Capability Parameters 1   (4B)
+#define XHCI_DBOFF          0x14   // Doorbell Array Offset      (4B)
+#define XHCI_RTSOFF         0x18   // Runtime Register Space Offset (4B)
+
+// Operational Register offsets (base = mmio_base + caplength)
+#define XHCI_USBCMD         0x00
+#define XHCI_USBSTS         0x04
+#define XHCI_PAGESIZE       0x08
+#define XHCI_DNCTRL         0x14
+#define XHCI_CRCR           0x18   // Command Ring Control Register (8B)
+#define XHCI_DCBAAP         0x30   // Device Context Base Address Array Pointer (8B)
+#define XHCI_CONFIG         0x38
+
+// USBCMD bits
+#define XHCI_CMD_RUN        (1u << 0)
+#define XHCI_CMD_HCRST      (1u << 1)
+#define XHCI_CMD_INTE       (1u << 2)
+
+// USBSTS bits
+#define XHCI_STS_HCH        (1u << 0)   // Host Controller Halted
+#define XHCI_STS_CNR        (1u << 11)  // Controller Not Ready
+
+// Port Register base (operational + 0x400), each port = 0x10
+#define XHCI_PORT_BASE      0x400
+#define XHCI_PORT_SIZE      0x10
+#define XHCI_PORTSC(n)      (XHCI_PORT_BASE + (n) * XHCI_PORT_SIZE + 0x00)
+
+// PORTSC bits
+#define PORTSC_CCS          (1u << 0)   // Current Connect Status
+#define PORTSC_PED          (1u << 1)   // Port Enabled/Disabled
+#define PORTSC_PR           (1u << 4)   // Port Reset
+#define PORTSC_PLS_MASK     (0xFu << 5)
+#define PORTSC_PP           (1u << 9)
+#define PORTSC_CSC          (1u << 17)  // Connect Status Change
+#define PORTSC_PRC          (1u << 21)  // Port Reset Change
+#define PORTSC_WPR          (1u << 30)  // Warm Port Reset
+#define PORTSC_PEC          (1u << 18)  // Port Enable/Disable Change
+#define PORTSC_OCC          (1u << 19)  // Over-current Change
+#define PORTSC_WRC          (1u << 19)  // Warm Port Reset Change (USB3)
+#define PORTSC_PLC          (1u << 22)  // Port Link State Change
+#define PORTSC_CEC          (1u << 23)  // Config Error Change
+
+#define PORTSC_RW1C_MASK    (PORTSC_CSC | PORTSC_PEC | PORTSC_OCC | \
+                             PORTSC_PRC | PORTSC_PLC | PORTSC_CEC)
+// TRB types
+#define TRB_TYPE_NORMAL         1
+#define TRB_TYPE_SETUP_STAGE    2
+#define TRB_TYPE_DATA_STAGE     3
+#define TRB_TYPE_STATUS_STAGE   4
+#define TRB_TYPE_ISOCH          5
+#define TRB_TYPE_LINK           6
+#define TRB_TYPE_EVENT_DATA     7
+#define TRB_TYPE_NOOP           8
+#define TRB_TYPE_ENABLE_SLOT    9
+#define TRB_TYPE_DISABLE_SLOT   10
+#define TRB_TYPE_ADDRESS_DEVICE 11
+#define TRB_TYPE_CONFIG_EP      12
+#define TRB_TYPE_EVAL_CTX       13
+#define TRB_TYPE_NOOP_CMD       23
+// Event TRB types
+#define TRB_TYPE_TRANSFER_EVT   32
+#define TRB_TYPE_CMD_CMPL_EVT   33
+#define TRB_TYPE_PORT_STS_EVT   34
+
+// Completion codes
+#define CC_SUCCESS          1
+#define CC_SHORT_PKT        13
+
+// ─────────────────────────────────────────────────────────────
+//  Transfer Request Block (TRB) – 16 bytes, 16-byte aligned
+// ─────────────────────────────────────────────────────────────
+struct __attribute__((packed)) TRB {
+    uint64_t param;     // Parameter (data pointer or other)
+    uint32_t status;    // Status / transfer length
+    uint32_t control;   // Cycle bit, type, flags
+};
+
+// control 필드 헬퍼 매크로
+#define TRB_CYCLE(c)        ((c) & 1u)
+#define TRB_TYPE_FIELD(t)   (((t) & 0x3Fu) << 10)
+#define TRB_GET_TYPE(trb)   (((trb).control >> 10) & 0x3F)
+#define TRB_GET_CC(trb)     (((trb).status >> 24) & 0xFF)
+#define TRB_GET_SLOT(trb)   (((trb).control >> 24) & 0xFF)
+
+// ─────────────────────────────────────────────────────────────
+//  Device Context (Slot + up to 31 Endpoint Contexts = 32 * 32B)
+// ─────────────────────────────────────────────────────────────
+#define CTX_ENTRY_SIZE  32          // 32-byte context entries (normal context)
+#define MAX_EP          32          // Slot Context + EP 1-31
+
+struct __attribute__((packed)) SlotContext {
+    uint32_t dw0;   // Route String, Speed, MTT, Hub, ContextEntries
+    uint32_t dw1;   // Max Exit Latency
+    uint32_t dw2;   // Root Hub Port Number, Number of Ports
+    uint32_t dw3;   // Interrupter Target, TT Hub Slot ID, TT Port Number
+    uint32_t dw4;   // Device Address, Slot State
+    uint32_t rsvd[3];
+};
+
+struct __attribute__((packed)) EndpointContext {
+    uint32_t dw0;   // EP State, Mult, MaxPStreams, Interval, HID
+    uint32_t dw1;   // Max Packet Size, Max Burst Size, EP Type, CErr
+    uint64_t tr_dequeue_ptr;    // TR Dequeue Pointer + DCS
+    uint32_t dw4;   // Average TRB Length, Max ESIT Payload
+    uint32_t rsvd[3];
+};
+
+// EP Type values (dw1 bits [5:3])
+#define EP_TYPE_CTRL        4
+#define EP_TYPE_BULK_OUT    2
+#define EP_TYPE_BULK_IN     6
+#define EP_TYPE_INTR_IN     7
+
+// ─────────────────────────────────────────────────────────────
+//  Input Context (Input Control Context + 32 entry contexts)
+// ─────────────────────────────────────────────────────────────
+struct __attribute__((packed)) InputControlContext {
+    uint32_t drop_flags;
+    uint32_t add_flags;
+    uint32_t rsvd[6];
+};
+
+// ─────────────────────────────────────────────────────────────
+//  Ring 관리 구조체
+// ─────────────────────────────────────────────────────────────
+#define CMD_RING_SIZE   16
+#define EVT_RING_SIZE   64
+#define XFER_RING_SIZE  16
+
+struct Ring {
+    TRB* trbs;       // TRB 배열 (물리 연속, 4KiB 페이지)
+    uint64_t phys;       // trbs의 물리 주소
+    uint16_t enqueue;    // enqueue 포인터 인덱스
+    uint16_t dequeue;    // dequeue 포인터 인덱스 (event ring에서 사용)
+    uint8_t  cycle;      // Producer Cycle State
+    uint16_t size;       // 링 크기 (Link TRB 포함)
+};
+
+// ─────────────────────────────────────────────────────────────
+//  USB 디바이스 속도 (PORTSC Speed bits [13:10])
+// ─────────────────────────────────────────────────────────────
+#define USB_SPEED_FULL      1
+#define USB_SPEED_LOW       2
+#define USB_SPEED_HIGH      3
+#define USB_SPEED_SUPER     4
+#define USB_SPEED_SUPER_PLUS 5
+
+// ─────────────────────────────────────────────────────────────
+//  USB 표준 요청 (Setup Packet)
+// ─────────────────────────────────────────────────────────────
+struct __attribute__((packed)) SetupPacket {
+    uint8_t  bmRequestType;
+    uint8_t  bRequest;
+    uint16_t wValue;
+    uint16_t wIndex;
+    uint16_t wLength;
+};
+
+#define USB_REQ_GET_DESCRIPTOR  0x06
+#define USB_REQ_SET_ADDRESS     0x05
+#define USB_REQ_SET_CONFIG      0x09
+#define USB_REQ_SET_INTERFACE   0x0B
+
+#define USB_DESC_DEVICE         0x01
+#define USB_DESC_CONFIG         0x02
+#define USB_DESC_STRING         0x03
+#define USB_DESC_INTERFACE      0x04
+#define USB_DESC_ENDPOINT       0x05
+
+#define USB_CLASS_MSC           0x08
+#define USB_SUBCLASS_SCSI       0x06
+#define USB_PROTO_BOT           0x50    // Bulk-Only Transport
+
+// ─────────────────────────────────────────────────────────────
+//  USB Descriptor 구조체
+// ─────────────────────────────────────────────────────────────
+struct __attribute__((packed)) USBDeviceDescriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint16_t bcdUSB;
+    uint8_t  bDeviceClass;
+    uint8_t  bDeviceSubClass;
+    uint8_t  bDeviceProtocol;
+    uint8_t  bMaxPacketSize0;
+    uint16_t idVendor;
+    uint16_t idProduct;
+    uint16_t bcdDevice;
+    uint8_t  iManufacturer;
+    uint8_t  iProduct;
+    uint8_t  iSerialNumber;
+    uint8_t  bNumConfigurations;
+};
+
+struct __attribute__((packed)) USBConfigDescriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint16_t wTotalLength;
+    uint8_t  bNumInterfaces;
+    uint8_t  bConfigurationValue;
+    uint8_t  iConfiguration;
+    uint8_t  bmAttributes;
+    uint8_t  bMaxPower;
+};
+
+struct __attribute__((packed)) USBInterfaceDescriptor {
+    uint8_t bLength;
+    uint8_t bDescriptorType;
+    uint8_t bInterfaceNumber;
+    uint8_t bAlternateSetting;
+    uint8_t bNumEndpoints;
+    uint8_t bInterfaceClass;
+    uint8_t bInterfaceSubClass;
+    uint8_t bInterfaceProtocol;
+    uint8_t iInterface;
+};
+
+struct __attribute__((packed)) USBEndpointDescriptor {
+    uint8_t  bLength;
+    uint8_t  bDescriptorType;
+    uint8_t  bEndpointAddress;  // bit7: 1=IN, bits[3:0]: EP number
+    uint8_t  bmAttributes;      // bits[1:0]: 0=ctrl, 2=bulk, 3=intr
+    uint16_t wMaxPacketSize;
+    uint8_t  bInterval;
+};
+
+// ─────────────────────────────────────────────────────────────
+//  Event Ring Segment Table Entry
+// ─────────────────────────────────────────────────────────────
+struct __attribute__((packed)) ERSTEntry {
+    uint64_t base_addr;
+    uint32_t ring_seg_size;
+    uint32_t rsvd;
+    uint64_t rsvd2[6];
+};
+
+// ─────────────────────────────────────────────────────────────
+//  슬롯 당 연결 정보
+// ─────────────────────────────────────────────────────────────
+struct USBDevice {
+    bool valid = false;
+    uint8_t  slot_id;
+    uint8_t  speed;
+    uint8_t  port;          // 1-based root hub port
+    uint8_t  ep_bulk_in;    // bulk-in endpoint address (1-based)
+    uint8_t  ep_bulk_out;   // bulk-out endpoint address (1-based)
+    uint16_t mps_ctrl;      // EP0 max packet size
+    uint16_t mps_bulk;      // Bulk EP max packet size
+
+    // Transfer rings for EP0, bulk-out, bulk-in
+    Ring     ctrl_ring;
+    Ring     out_ring;
+    Ring     in_ring;
+
+    // Device / Input context (물리 페이지)
+    uint64_t dev_ctx_phys;
+    uint64_t dev_ctx_virt;
+    uint64_t in_ctx_phys;
+    uint64_t in_ctx_virt;
+
+};
+
+// ─────────────────────────────────────────────────────────────
+//  XHCIController 클래스
+// ─────────────────────────────────────────────────────────────
+class XHCIController : public Controller {
+public:
+    XHCIController(uint16_t bus, uint16_t slot, uint16_t func);
+    ~XHCIController();
+
+    void init();
+
+    // 컨트롤 전송 (EP0)  – setup/data/status 자동 분리
+    int  ctrl_transfer(USBDevice& dev, SetupPacket& setup,
+        void* data_phys, uint16_t length, bool in);
+
+    // Bulk 전송 (MSC에서 사용)
+    int  bulk_out(USBDevice& dev, void* phys, uint32_t length);
+    int  bulk_in(USBDevice& dev, void* phys, uint32_t length);
+
+private:
+    // ── PCI / MMIO ──────────────────────────────────────────
+    volatile uint8_t* mmio_base;   // BAR0 가상 주소
+
+    // ── 오프셋 캐시 ─────────────────────────────────────────
+    uint8_t  cap_length;           // Capability register length
+    uint32_t db_offset;            // Doorbell array offset
+    uint32_t rt_offset;            // Runtime register space offset
+    uint8_t  max_ports;            // HCSPARAMS1[31:24]
+    uint8_t  max_slots;            // HCSPARAMS1[7:0]
+    uint32_t stride;               // Context size: 32 or 64 bytes
+
+    // ── 링 ──────────────────────────────────────────────────
+    Ring     cmd_ring;
+    Ring     evt_ring;
+    ERSTEntry* erst;               // Event Ring Segment Table (물리 연속)
+    uint64_t  erst_phys;
+
+    // ── DCBAA (Device Context Base Address Array) ───────────
+    // max_slots+1 개의 64-bit 엔트리, 64-byte 정렬
+    uint64_t* dcbaa;
+    uint64_t  dcbaa_phys;
+
+    // ── 연결된 디바이스 (slot 1 ~ max_slots) ─────────────────
+    vector<USBDevice> devices;  // index = slot_id
+
+    // ── 내부 헬퍼 ───────────────────────────────────────────
+    // 메모리
+    uint64_t alloc_page(uint64_t& virt_out);   // 4KiB 정렬 물리 페이지 반환
+    void     free_page(uint64_t phys, uint64_t virt);
+
+    // 링 초기화 / TRB 삽입
+    void     ring_init(Ring& r, uint16_t size);
+    void     ring_init_event(Ring& r, uint16_t size);
+    void     ring_free(Ring& r);
+    TRB* ring_enqueue(Ring& r, uint8_t& cycle_out);            // 다음 쓸 TRB 포인터 반환, Link 처리
+    void     ring_doorbell(uint8_t slot, uint8_t ep_idx);
+
+    // 오퍼레이셔널 레지스터 접근
+    volatile uint32_t* op_reg32(uint32_t off);
+    volatile uint64_t* op_reg64(uint32_t off);
+    volatile uint32_t* cap_reg32(uint32_t off);
+
+    // 명령 전송 & 이벤트 대기
+    TRB      send_command(TRB& cmd);           // cmd ring에 TRB 넣고 완료 이벤트 반환
+    TRB      wait_event(uint8_t expected_type);// 특정 이벤트 TRB 대기
+
+    // 초기화 단계
+    void     reset_controller();
+    void     setup_cmd_ring();
+    void     setup_evt_ring();
+    void     setup_dcbaa();
+
+    // 포트 처리
+    void     scan_ports();
+    void     handle_port(uint8_t port);        // 포트 리셋 → Enable Slot → Address Device
+
+    // 디바이스 초기화 파이프라인
+    bool     enable_slot(uint8_t port, uint8_t speed, uint8_t& slot_id_out);
+    bool     address_device(USBDevice& dev, bool bsr);
+    bool     get_device_descriptor(USBDevice& dev, USBDeviceDescriptor& out);
+    bool     get_config_descriptor(USBDevice& dev, uint8_t* buf, uint16_t len);
+    bool     set_configuration(USBDevice& dev, uint8_t config_val);
+    bool     configure_endpoints(USBDevice& dev, uint8_t* cfg_buf, uint16_t len);
+
+    // MSC 디스크 생성
+    void     try_create_msc_disk(USBDevice& dev);
+
+    void bios_handoff();
+};
+
+#endif // __XHCI_C_H__

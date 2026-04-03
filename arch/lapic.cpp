@@ -17,7 +17,21 @@ void disable_pic() {
     outb(0xA1, 0xFF); // 슬레이브 PIC 마스크
     outb(0x21, 0xFF); // 마스터 PIC 마스크
 }
-
+// PS/2 컨트롤러에서 마우스 활성화 및 인터럽트 설정
+void enable_cursor() {
+    outb(0x64, 0xA8);  // 마우스 활성화
+    outb(0x64, 0x20);
+    while ((inb(0x64) & 1) == 0);
+    uint8_t status = inb(0x60) | 0x01 | 0x02;  // 키보드(bit0) + 마우스(bit1) 둘 다 켜기
+    outb(0x64, 0x60);
+    outb(0x60, status);
+    outb(0x64, 0xD4);
+    outb(0x60, 0xF4);
+}
+// PS/2 컨트롤러에서 키보드 활성화
+void enable_keyboard() {
+    outb(0x64, 0xAE);  // 키보드 활성화
+}
 // Local APIC 활성화
 void enable_apic() {
     // 전역 lapic_base 사용
@@ -30,20 +44,106 @@ void enable_apic() {
 }
 // IOAPIC 레지스터 접근
 
-static inline void lapic_write(uint32_t reg, uint32_t value) {
-    *(volatile uint32_t*)(lapic_base + reg) = value;
+static inline int tsc_deadline_supported(void) {
+    uint32_t ecx;
+    __asm__ volatile (
+        "cpuid"
+        : "=c"(ecx)
+        : "a"(1)
+        : "ebx", "edx"
+        );
+    // CPUID.01H:ECX[24] = TSC-Deadline 지원 비트
+    return (ecx >> 24) & 1;
 }
+// 기존 정의 재사용
 #define LAPIC_REG_TIMER         0x320
-#define LAPIC_TIMER_MODE_PERIODIC (1 << 17)
-#define LAPIC_REG_TIMER_DIVIDE 0x3E0
-#define LAPIC_REG_TIMER_INIT   0x380
-void setup_lapic_timer(uint8_t vector) {
-    // 1. Divide Configuration (Divide by 16)
-    lapic_write(LAPIC_REG_TIMER_DIVIDE, 0b0011); // Divide by 16
+#define LAPIC_REG_TIMER_DIVIDE  0x3E0
+#define LAPIC_REG_TIMER_INIT    0x380
+#define LAPIC_REG_EOI           0xB0
 
-    // 2. Set LVT Timer Register (인터럽트 벡터 설정)
-    lapic_write(LAPIC_REG_TIMER, LAPIC_TIMER_MODE_PERIODIC | vector);
+// 추가 정의
+#define LAPIC_TIMER_MODE_TSC_DEADLINE (2 << 17)  // 기존 PERIODIC (1<<17)과 동일 패턴
+#define LAPIC_TIMER_MODE_ONESHOT  (0 << 17)
+#define MSR_IA32_TSC_DEADLINE         0x6E0
+#define PIT_HZ          1193182ULL
+#define PIT_CMD         0x43
+#define PIT_CH2         0x42
+#define PIT_GATE        0x61
+uint64_t g_tsc_hz = 0;
+uint64_t g_lapic_hz = 0;
+bool tsc_available = false;
+uint64_t fake_tsc = 0;
+uint64_t fake_deadline = 0;
+uint64_t calibrate_with_pit(void) {
+    uint16_t pit_ticks = (uint16_t)(PIT_HZ / 100); // 10ms
 
-    // 3. Set Initial Count (클럭 사이클 수)
-    lapic_write(LAPIC_REG_TIMER_INIT, 0x100000); // 값 작게 = 빠름, 크면 = 느림
+    // PIT 설정
+    outb(PIT_CMD, 0b10110010);
+    outb(PIT_CH2, (uint8_t)(pit_ticks & 0xFF));
+    outb(PIT_CH2, (uint8_t)(pit_ticks >> 8));
+
+    // GATE 시작
+    uint8_t gate = inb(PIT_GATE);
+    outb(PIT_GATE, (gate & ~1) | 1);
+
+    if (tsc_available) {
+        // TSC Hz 측정
+        uint64_t start = rdtsc_get();
+        while (!(inb(PIT_GATE) & 0x20));
+        return (rdtsc_get() - start) * 100;
+    }
+    else {
+        lapic_write(LAPIC_REG_TIMER, LAPIC_TIMER_MODE_ONESHOT | 0xFF);
+        lapic_write(LAPIC_REG_TIMER_DIVIDE, 0b0011);
+        lapic_write(LAPIC_REG_TIMER_INIT, 0xFFFFFFFF);
+
+        uint64_t tsc_start = rdtsc_get();  // TSC도 같이 측정 시작
+        while (!(inb(PIT_GATE) & 0x20));
+        uint64_t tsc_elapsed = rdtsc_get() - tsc_start;
+
+        uint32_t lapic_current = *(volatile uint32_t*)(lapic_base + 0x390);
+        uint32_t lapic_elapsed = 0xFFFFFFFF - lapic_current;
+
+		g_tsc_hz = (tsc_elapsed * 100) / lapic_elapsed; // TSC Hz 계산
+
+        return (uint64_t)lapic_elapsed * 100;
+    }
+}
+uint64_t tsc_get_freq_cpuid(void) {
+    uint32_t eax, ebx, ecx;
+    __asm__ volatile ("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx)
+        : "a"(0x15)
+        : "edx");
+
+    // eax = TSC/crystal 분모, ebx = 분자, ecx = crystal Hz
+    if (eax == 0 || ebx == 0 || ecx == 0)
+        return 0; // 지원 안 함 → 방법 2로 fallback
+
+    return (uint64_t)ecx * ebx / eax;
+}
+// TSC-Deadline 초기화 (기존 setup_lapic_timer와 동일한 시그니처)
+void setup_lapic_timer_tsc_deadline(uint8_t vector) {
+    // Divide, Init Count는 TSC-Deadline 모드에서 무시됨 → 설정 불필요
+    if(tsc_available)
+        lapic_write(LAPIC_REG_TIMER, LAPIC_TIMER_MODE_TSC_DEADLINE | vector);
+    else {
+        lapic_write(LAPIC_REG_TIMER, LAPIC_TIMER_MODE_ONESHOT | vector);
+        lapic_write(LAPIC_REG_TIMER_DIVIDE, 0b0011);
+    }
+}
+void tsc_init(void) {
+    if (!tsc_deadline_supported()) {
+        g_lapic_hz = calibrate_with_pit();// lapic_ticks_per_tsc_tick 구하기
+        return;
+    }
+	tsc_available = true;
+    g_tsc_hz = tsc_get_freq_cpuid();
+    if (g_tsc_hz == 0)
+        g_tsc_hz = calibrate_with_pit(); // fallback
+}
+
+// 취소
+void lapic_tsc_deadline_cancel(void) {
+    wrmsr(MSR_IA32_TSC_DEADLINE, 0);
 }

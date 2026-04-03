@@ -2,66 +2,95 @@
 #define __AHCI_H__
 #include "util/size.h"
 #include "driver/disk.h"
+#include "arch/ahci_c.h"
 
-#define HBA_PORT_DET_MASK 0x0F
-#define HBA_PORT_DET_PRESENT 0x03
-#define HBA_PORT_IPM_MASK (0x0F << 8)
-#define HBA_PORT_IPM_ACTIVE (0x01 << 8)
+// ─────────────────────────────────────────────────────────────
+//  FIS / Command 구조체
+// ─────────────────────────────────────────────────────────────
+struct __attribute__((packed)) FIS_REG_H2D {
+    uint8_t  fis_type;      // 0x27
+    uint8_t  pmport : 4;
+    uint8_t  rsv0 : 3;
+    uint8_t  c : 1;    // 1=Command, 0=Control
+    uint8_t  command;
+    uint8_t  featurel;
 
-#define SATA_SIG_ATAPI 0xEB140101
-#define SATA_SIG_SEMB  0xC33C0101
-#define SATA_SIG_PM    0x96690101
-#define SATA_SIG_SATA  0x00000101
+    uint8_t  lba0, lba1, lba2;
+    uint8_t  device;        // bit6 = LBA mode
 
-struct HBA_PORT {
-    volatile uint32_t clb;
-    volatile uint32_t clbu;
-    volatile uint32_t fb;
-    volatile uint32_t fbu;
-    volatile uint32_t is;
-    volatile uint32_t ie;
-    volatile uint32_t cmd;
-    volatile uint32_t rsv0;
-    volatile uint32_t tfd;
-    volatile uint32_t sig;
-    volatile uint32_t ssts;
-    volatile uint32_t sctl;
-    volatile uint32_t serr;
-    volatile uint32_t sact;
-    volatile uint32_t ci;
-    volatile uint32_t sntf;
-    volatile uint32_t fbs;
-    volatile uint32_t rsv1[11];
-    volatile uint32_t vendor[4];
-} __attribute__((packed));
+    uint8_t  lba3, lba4, lba5;
+    uint8_t  featureh;
 
-struct HBA_MEM {
-    volatile uint32_t cap;
-    volatile uint32_t ghc;
-    volatile uint32_t is;
-    volatile uint32_t pi;
-    volatile uint32_t vs;
-    volatile uint32_t ccc_ctl;
-    volatile uint32_t ccc_pts;
-    volatile uint32_t em_loc;
-    volatile uint32_t em_ctl;
-    volatile uint32_t cap2;
-    volatile uint32_t bohc;
-    volatile uint8_t  rsv[0xA0 - 0x2C];
-    volatile uint8_t  vendor[0x100 - 0xA0];
-    volatile HBA_PORT ports[32];
-} __attribute__((packed));
-class AHCIDisk : public Disk{
+    uint8_t  countl, counth;
+    uint8_t  icc;
+    uint8_t  control;
+
+    uint8_t  rsv1[4];
+};
+
+struct __attribute__((packed)) HBA_PRDT_ENTRY {
+    uint32_t dba;           // Data Base Address (물리)
+    uint32_t dbau;          // Data Base Address Upper
+    uint32_t rsv0;
+    uint32_t dbc : 22;    // Byte count (0-based)
+    uint32_t rsv1 : 9;
+    uint32_t i : 1;     // Interrupt on Completion
+};
+
+struct __attribute__((packed)) HBA_CMD_HEADER {
+    uint8_t  cfl : 5;     // Command FIS Length (DWORDs)
+    uint8_t  a : 1;     // ATAPI
+    uint8_t  w : 1;     // Write (1=H2D)
+    uint8_t  p : 1;     // Prefetchable
+
+    uint8_t  r : 1;
+    uint8_t  b : 1;
+    uint8_t  c : 1;     // Clear Busy on R_OK
+    uint8_t  rsv0 : 1;
+    uint8_t  pmp : 4;
+
+    uint16_t prdtl;         // PRDT 엔트리 수
+    uint32_t prdbc;         // 전송된 바이트 수 (HW가 채움)
+
+    uint32_t ctba;          // Command Table Base (물리)
+    uint32_t ctbau;
+
+    uint32_t rsv1[4];
+};
+
+struct __attribute__((packed)) HBA_CMD_TBL {
+    uint8_t        cfis[64];        // Command FIS
+    uint8_t        acmd[16];        // ATAPI Command
+    uint8_t        rsv[48];
+    HBA_PRDT_ENTRY prdt_entry[1];   // 가변 길이
+};
+
+// ─────────────────────────────────────────────────────────────
+//  AHCIDisk : Disk 상속, 포트 하나를 전담
+// ─────────────────────────────────────────────────────────────
+class AHCIDisk : public Disk {
+public:
+    // AHCIController가 포트를 발견하고 직접 생성
+    AHCIDisk(volatile HBA_PORT* port,
+        uint16_t bus, uint16_t slot, uint16_t func, uint32_t port_idx);
+    ~AHCIDisk() override;
+
+    void init()        override;
+    int  read_sector(uint64_t lba, uint32_t count, void* phys_buf)       override;
+    int  write_sector(uint64_t lba, uint32_t count, const void* phys_buf) override;
+
 private:
     volatile HBA_PORT* port;
+
+    // DMA 메모리 (4KiB 페이지 1개)
+    // 레이아웃: [Command List 1KB][FIS 256B][Command Table 256B+]
     uint64_t dma_phys_base;
     uint64_t dma_virt_base;
+
     void start_cmd();
     void stop_cmd();
-public:
-	AHCIDisk(uint8_t bus, uint8_t slot, uint8_t func) : Disk(bus, slot, func) {}
-    ~AHCIDisk();
-    void init() override;
-    int read_sector(uint64_t lba, uint32_t count, void* buf) override;
+
+    // read/write 공통 로직 (w=0 읽기, w=1 쓰기)
+    int  do_rw(uint64_t lba, uint32_t count, uint64_t phys_buf, int write);
 };
 #endif /*__AHCI_H__*/

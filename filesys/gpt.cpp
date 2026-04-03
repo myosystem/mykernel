@@ -4,6 +4,7 @@
 #include "driver/disk.h"
 #include "debug/log.h"
 #include "util/util.h"
+#include "kernel/kernel.h"
 
 void GPTPartitioner::init(Disk* disk) {
     this->master_disk = disk;

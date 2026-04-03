@@ -1,0 +1,923 @@
+#include "arch/xhci_c.h"
+#include "driver/xhci.h"
+#include "arch/pci.h"
+#include "mm/allocator"
+#include "util/memory.h"
+#include "debug/log.h"
+
+// ═══════════════════════════════════════════════════════════════
+//  생성자 / 소멸자
+// ═══════════════════════════════════════════════════════════════
+XHCIController::XHCIController(uint16_t bus, uint16_t slot, uint16_t func)
+    : Controller(bus, slot, func) {
+}
+
+XHCIController::~XHCIController() {
+    for (size_t i = 1; i < 256; i++) {
+        if (!devices[i].valid) continue;
+        USBDevice d = devices[i];
+        ring_free(d.ctrl_ring);
+        ring_free(d.out_ring);
+        ring_free(d.in_ring);
+        free_page(d.dev_ctx_phys, d.dev_ctx_virt);
+        free_page(d.in_ctx_phys, d.in_ctx_virt);
+    }
+    ring_free(cmd_ring);
+    ring_free(evt_ring);
+    if (dcbaa) {
+        virt_page_allocator->free_virt_page((uint64_t)dcbaa);
+        phy_page_allocator->put_page(dcbaa_phys);
+    }
+    if (erst) {
+        virt_page_allocator->free_virt_page((uint64_t)erst);
+        phy_page_allocator->put_page(erst_phys);
+    }
+    uint64_t bar_size = pci_get_bar_size(pci_bus, pci_slot, pci_func, 0x10).size;
+    for (uint64_t off = 0; off < bar_size; off += 4096)
+        virt_page_allocator->free_virt_page((uint64_t)mmio_base + off);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  메모리 헬퍼
+// ═══════════════════════════════════════════════════════════════
+uint64_t XHCIController::alloc_page(uint64_t& virt_out) {
+    uint64_t phys = phy_page_allocator->alloc_phy_page();
+    virt_out = phys + MMIO_BASE;
+    virt_page_allocator->alloc_virt_page(virt_out, phys,
+        VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
+    memset((void*)virt_out, 0, 4096);
+    return phys;
+}
+
+void XHCIController::free_page(uint64_t phys, uint64_t virt) {
+    virt_page_allocator->free_virt_page(virt);
+    phy_page_allocator->put_page(phys);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  레지스터 접근
+// ═══════════════════════════════════════════════════════════════
+volatile uint32_t* XHCIController::op_reg32(uint32_t off) {
+    return (volatile uint32_t*)(mmio_base + cap_length + off);
+}
+volatile uint64_t* XHCIController::op_reg64(uint32_t off) {
+    return (volatile uint64_t*)(mmio_base + cap_length + off);
+}
+volatile uint32_t* XHCIController::cap_reg32(uint32_t off) {
+    return (volatile uint32_t*)(mmio_base + off);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  링 관리
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::ring_init(Ring& r, uint16_t size) {
+    r.size = size;
+    r.enqueue = 0;
+    r.dequeue = 0;
+    r.cycle = 1;
+    r.phys = alloc_page(*(uint64_t*)&r.trbs);
+
+    TRB& link = r.trbs[size - 1];
+    link.param = r.phys;
+    link.status = 0;
+    link.control = TRB_TYPE_FIELD(TRB_TYPE_LINK) | (1u << 1) | TRB_CYCLE(r.cycle);
+}
+void XHCIController::ring_init_event(Ring& r, uint16_t size) {
+    r.size = size;
+    r.enqueue = 0;
+    r.dequeue = 0;
+    r.cycle = 1;
+    uint64_t virt;
+    r.phys = alloc_page(virt);
+    r.trbs = (TRB*)virt;
+    // Link TRB 없음 — memset은 alloc_page에서 이미 0으로 초기화됨
+}
+void XHCIController::ring_free(Ring& r) {
+    if (r.trbs) {
+        free_page(r.phys, (uint64_t)r.trbs);
+        r.trbs = nullptr;
+    }
+}
+
+// cycle_out: 반환된 슬롯에 기록해야 할 cycle bit (enqueue 이전 값)
+TRB* XHCIController::ring_enqueue(Ring& r, uint8_t& cycle_out) {
+    TRB* t = &r.trbs[r.enqueue];
+    cycle_out = r.cycle;  // ← wrap 전 cycle 캡처
+    r.enqueue++;
+    if (r.enqueue == r.size - 1) {
+        // Link TRB에 현재 cycle 적용 후 cycle 토글
+        TRB& link = r.trbs[r.size - 1];
+        link.control = (link.control & ~1u) | TRB_CYCLE(r.cycle);
+        r.cycle ^= 1;
+        r.enqueue = 0;
+    }
+    return t;
+}
+
+void XHCIController::ring_doorbell(uint8_t slot, uint8_t ep_idx) {
+    volatile uint32_t* db =
+        (volatile uint32_t*)(mmio_base + db_offset + (uint32_t)slot * 4);
+    uart_print("  [DB] slot="); uart_print_hex(slot);
+    uart_print(" ep=");         uart_print_hex(ep_idx);
+    uart_print("\n");
+    uint64_t db_virt = (uint64_t)mmio_base + db_offset;
+    uint64_t db_phys = virt_page_allocator->get_mapping(db_virt);
+	uart_print("  [DB] writing to virt="); uart_print_hex(db_virt);
+	uart_print(" phys="); uart_print_hex(db_phys);
+	uart_print("\n");
+    *db = ep_idx;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  이벤트 대기
+// ═══════════════════════════════════════════════════════════════
+TRB XHCIController::wait_event(uint8_t expected_type) {
+    uart_print("  [EVT] waiting dequeue="); uart_print_hex(evt_ring.dequeue);
+    uart_print(" cycle=");                  uart_print_hex(evt_ring.cycle);
+    uart_print("\n");
+
+    volatile TRB* ep = (volatile TRB*)&evt_ring.trbs[evt_ring.dequeue];
+
+    uint32_t spin = 0;
+    while ((ep->control & 1u) != evt_ring.cycle) {
+        __asm__ volatile ("pause" ::: "memory");
+        spin++;
+        if (spin == 10000000) {
+            uint32_t usbsts = *op_reg32(XHCI_USBSTS);
+            uart_print("  [EVT] !! TIMEOUT !! USBSTS="); uart_print_hex(usbsts);
+
+            if (usbsts & (1u << 2))  uart_print(" [HSE: Host System Error!]");
+            if (usbsts & (1u << 12)) uart_print(" [HCE: Host Controller Error!]");
+            if (usbsts & (1u << 10)) uart_print(" [EINT: Event Interrupt Pending]");
+            if (usbsts & (1u << 0))  uart_print(" [HCH: Halted]");
+
+            uart_print("\n  TRB[0].ctrl="); uart_print_hex(evt_ring.trbs[0].control);
+            uart_print(" ERDP_REG=");      uart_print_hex(*(volatile uint64_t*)(mmio_base + rt_offset + 0x20 + 0x38));
+            uart_print("\n");
+            spin = 0;
+        }
+    }
+
+    TRB result = *const_cast<TRB*>(ep);
+    uart_print("  [EVT] type=");   uart_print_hex(TRB_GET_TYPE(result));
+    uart_print(" cc=");            uart_print_hex(TRB_GET_CC(result));
+    uart_print(" slot=");          uart_print_hex(TRB_GET_SLOT(result));
+    uart_print(" ctrl=");          uart_print_hex(result.control);
+    uart_print(" stat=");          uart_print_hex(result.status);
+    uart_print("\n");
+
+    evt_ring.dequeue++;
+    if (evt_ring.dequeue == evt_ring.size) {
+        evt_ring.dequeue = 0;
+        evt_ring.cycle ^= 1;
+        uart_print("  [EVT] ring wrap cycle="); uart_print_hex(evt_ring.cycle);
+        uart_print("\n");
+    }
+    // setup_evt_ring 및 wait_event 공통
+    uint32_t ir_base = rt_offset + 0x20; // Interrupter 0 base
+    // ERDP 오프셋은 ir_base + 0x18 입니다. (0x38 아님)
+    volatile uint64_t* erdp_reg = (volatile uint64_t*)(mmio_base + ir_base + 0x18);
+    *erdp_reg = (evt_ring.phys + evt_ring.dequeue * sizeof(TRB)) | (1ULL << 3); // EHB 비트 유지 권장
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  명령 전송
+// ═══════════════════════════════════════════════════════════════
+TRB XHCIController::send_command(TRB& cmd) {
+    uart_print("[CMD] type=");  uart_print_hex((cmd.control >> 10) & 0x3F);
+    uart_print(" enqueue=");    uart_print_hex(cmd_ring.enqueue);
+    uart_print(" cycle=");      uart_print_hex(cmd_ring.cycle);
+    uart_print(" param=");      uart_print_hex(cmd.param);
+    uart_print(" USBSTS=");     uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+
+    uint8_t cycle;
+    TRB* slot = ring_enqueue(cmd_ring, cycle);  // wrap 전 cycle 캡처
+
+    // 캡처한 cycle bit 적용 (wrap 이후 cmd_ring.cycle과 다를 수 있음)
+    cmd.control = (cmd.control & ~1u) | TRB_CYCLE(cycle);
+    *slot = cmd;
+
+    __asm__ volatile ("sfence" ::: "memory");  // TRB 전체 기록 완료 후 fence
+
+    uart_print("[CMD] written ctrl="); uart_print_hex(slot->control);
+    uart_print(" cycle=");             uart_print_hex(cycle);
+    uart_print("\n");
+    uart_print("[CMD] TRB phys="); uart_print_hex(cmd_ring.phys);
+    uart_print("\n");
+    uart_print("[CMD] TRB[0] param=");  uart_print_hex(cmd_ring.trbs[0].param);
+    uart_print(" status="); uart_print_hex(cmd_ring.trbs[0].status);
+    uart_print(" ctrl=");   uart_print_hex(cmd_ring.trbs[0].control);
+    uart_print("\n");
+    uart_print("[CMD] TRB[1] ctrl="); uart_print_hex(cmd_ring.trbs[1].control);
+    uart_print("\n");
+    // Link TRB (마지막)
+    uart_print("[CMD] LINK param=");  uart_print_hex(cmd_ring.trbs[CMD_RING_SIZE - 1].param);
+    uart_print(" ctrl=");             uart_print_hex(cmd_ring.trbs[CMD_RING_SIZE - 1].control);
+    uart_print("\n");
+    ring_doorbell(0, 0);
+    return wait_event(TRB_TYPE_CMD_CMPL_EVT);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BIOS Ownership 반환
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::bios_handoff() {
+    uint32_t hcc1 = *cap_reg32(XHCI_HCCPARAMS1);
+    uint32_t xecp = ((hcc1 >> 16) & 0xFFFF) << 2;
+
+    uart_print("[XHCI] BIOS handoff xecp="); uart_print_hex(xecp);
+    uart_print("\n");
+
+    while (xecp) {
+        uint32_t cap = *cap_reg32(xecp);
+        uint8_t  cap_id = cap & 0xFF;
+
+        uart_print("[XHCI] xECP cap_id="); uart_print_hex(cap_id);
+        uart_print(" val=");               uart_print_hex(cap);
+        uart_print("\n");
+
+        if (cap_id == 1) {  // USB Legacy Support
+            uart_print("[XHCI] found USB Legacy Support, taking ownership...\n");
+            *cap_reg32(xecp) = (cap & ~(1u << 16)) | (1u << 24);
+            uint32_t spin = 0;
+            while (*cap_reg32(xecp) & (1u << 16)) {
+                __asm__ volatile ("pause");
+                spin++;
+                if (spin == 10000000) {
+                    uart_print("[XHCI] BIOS handoff timeout! cap=");
+                    uart_print_hex(*cap_reg32(xecp));
+                    uart_print("\n");
+                    spin = 0;
+                }
+            }
+            uart_print("[XHCI] BIOS handoff done cap=");
+            uart_print_hex(*cap_reg32(xecp));
+            uart_print("\n");
+            break;
+        }
+
+        uint8_t next = (cap >> 8) & 0xFF;
+        if (!next) break;
+        xecp += next << 2;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  컨트롤러 리셋
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::reset_controller() {
+    bios_handoff();
+
+    *op_reg32(XHCI_USBCMD) &= ~XHCI_CMD_RUN;
+    while (!(*op_reg32(XHCI_USBSTS) & XHCI_STS_HCH));
+    uart_print("[XHCI] halted\n");
+
+    *op_reg32(XHCI_USBCMD) |= XHCI_CMD_HCRST;
+    while (*op_reg32(XHCI_USBCMD) & XHCI_CMD_HCRST) {}
+    while (*op_reg32(XHCI_USBSTS) & XHCI_STS_CNR) {}
+
+    // 리셋 후 USBSTS 잔여 비트 클리어 (RW1C)
+    uart_print("[XHCI] reset done USBSTS=");
+    uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  setup_cmd_ring
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::setup_cmd_ring() {
+    ring_init(cmd_ring, CMD_RING_SIZE);
+
+    uart_print("[XHCI] CRCR before="); uart_print_hex(*op_reg64(XHCI_CRCR));
+    uart_print("\n");
+
+    volatile uint32_t* crcr_lo = op_reg32(XHCI_CRCR);
+    volatile uint32_t* crcr_hi = op_reg32(XHCI_CRCR + 4);
+    *crcr_lo = (uint32_t)(cmd_ring.phys | 1u);
+    *crcr_hi = (uint32_t)(cmd_ring.phys >> 32);
+
+    uart_print("[XHCI] CMD ring phys="); uart_print_hex(cmd_ring.phys);
+    uart_print(" CRCR after=");          uart_print_hex(*op_reg64(XHCI_CRCR));
+    uart_print("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  setup_evt_ring
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::setup_evt_ring() {
+    ring_init_event(evt_ring, EVT_RING_SIZE);
+
+    uint64_t erst_virt;
+    erst_phys = alloc_page(erst_virt);
+    erst = (ERSTEntry*)erst_virt;
+    erst[0].base_addr = evt_ring.phys;
+    erst[0].ring_seg_size = EVT_RING_SIZE;
+
+    uint32_t ir_base = rt_offset + 0x20;
+    volatile uint32_t* erstsz = (volatile uint32_t*)(mmio_base + ir_base + 0x28);
+    volatile uint32_t* erstba_lo = (volatile uint32_t*)(mmio_base + ir_base + 0x30);
+    volatile uint32_t* erstba_hi = (volatile uint32_t*)(mmio_base + ir_base + 0x34);
+    volatile uint32_t* erdp_lo = (volatile uint32_t*)(mmio_base + ir_base + 0x38);
+    volatile uint32_t* erdp_hi = (volatile uint32_t*)(mmio_base + ir_base + 0x3C);
+    volatile uint32_t* iman = (volatile uint32_t*)(mmio_base + ir_base + 0x00);
+
+    *erstsz = 1;              // 먼저 0으로
+    *erdp_lo = (uint32_t)(evt_ring.phys & 0xFFFFFFFF);
+    *erdp_hi = (uint32_t)(evt_ring.phys >> 32);
+    *erstba_lo = (uint32_t)(erst_phys & 0xFFFFFFFF);
+    *erstba_hi = (uint32_t)(erst_phys >> 32);
+    __asm__ volatile ("mfence" ::: "memory");
+    uart_print("[XHCI] ERSTBA written, USBSTS=");
+    uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+    //*erstsz = 1;
+    //uart_print("[XHCI] ERSTSZ written, USBSTS=");
+    //uart_print_hex(*op_reg32(XHCI_USBSTS));
+    //uart_print("\n");             // 마지막에 1로
+    *iman = 0;
+    *iman |= (1 << 1);   // IE enable
+    *iman |= (1 << 0);   // clear IP
+    volatile uint32_t* imod = (volatile uint32_t*)(mmio_base + ir_base + 0x04);
+    *imod = 0;  // IMOD = 0, throttling 없음
+
+    uart_print("[XHCI] EVT ring phys="); uart_print_hex(evt_ring.phys);
+    uart_print("\n       erst_phys=");   uart_print_hex(erst_phys);
+    uart_print("\n       ERSTSZ=");      uart_print_hex(*erstsz);
+    uart_print("\n       ERSTBA=");      uart_print_hex(*erstba_lo);
+    uart_print("\n       ERSTBA_HI=");   uart_print_hex(*erstba_hi);
+    uart_print("\n       ERDP=");        uart_print_hex(*erdp_lo);
+    uart_print("\n       ERDP_HI=");     uart_print_hex(*erdp_hi);
+    uart_print("\n");
+    uint32_t* erst_raw = (uint32_t*)erst;
+    uart_print("[ERST Check] 0:"); uart_print_hex(erst_raw[0]);
+    uart_print(" 1:"); uart_print_hex(erst_raw[1]);
+    uart_print(" 2:"); uart_print_hex(erst_raw[2]);
+    uart_print(" 3:"); uart_print_hex(erst_raw[3]);
+    uart_print("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  setup_dcbaa  (Scratchpad 포함)
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::setup_dcbaa() {
+    uint64_t virt;
+    dcbaa_phys = alloc_page(virt);
+    dcbaa = (uint64_t*)virt;
+
+    uint32_t hcs2 = *cap_reg32(XHCI_HCSPARAMS2);
+    uint32_t max_sp = ((hcs2 >> 27) & 0x1F) | (((hcs2 >> 21) & 0x1F) << 5);
+    uart_print("[XHCI] scratchpad count="); uart_print_hex(max_sp);
+    uart_print("\n");
+
+    if (max_sp > 0) {
+        uint64_t sp_arr_virt;
+        uint64_t sp_arr_phys = alloc_page(sp_arr_virt);
+        uint64_t* sp_arr = (uint64_t*)sp_arr_virt;
+
+        for (uint32_t i = 0; i < max_sp; i++) {
+            uint64_t sp_virt;
+            sp_arr[i] = alloc_page(sp_virt);
+            uart_print("[XHCI] scratchpad["); uart_print_hex(i);
+            uart_print("]=");                 uart_print_hex(sp_arr[i]);
+            uart_print("\n");
+        }
+
+        dcbaa[0] = sp_arr_phys;
+        uart_print("[XHCI] scratchpad array phys="); uart_print_hex(sp_arr_phys);
+        uart_print("\n");
+    }
+
+    volatile uint32_t* dcbaap_lo = op_reg32(XHCI_DCBAAP);
+    volatile uint32_t* dcbaap_hi = op_reg32(XHCI_DCBAAP + 4);
+    *dcbaap_lo = (uint32_t)(dcbaa_phys & 0xFFFFFFFF);
+    *dcbaap_hi = (uint32_t)(dcbaa_phys >> 32);
+    uart_print("[XHCI] DCBAA phys="); uart_print_hex(dcbaa_phys);
+    uart_print(" DCBAAP=");           uart_print_hex(*op_reg64(XHCI_DCBAAP));
+    uart_print("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  init
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::init() {
+    uart_print("[XHCI] ===== init start =====\n");
+
+    // 1. BAR0 매핑
+    pci_bar_info_t bar = pci_get_bar_size(pci_bus, pci_slot, pci_func, 0x10);
+    uart_print("[XHCI] BAR0 addr="); uart_print_hex(bar.addr);
+    uart_print(" size=");            uart_print_hex(bar.size);
+    uart_print("\n");
+
+    uint16_t pci_cmd = pci_read16(pci_bus, pci_slot, pci_func, 0x04);
+    uart_print("[XHCI] PCI CMD before="); uart_print_hex(pci_cmd);
+    uart_print("\n");
+    pci_cmd |= (1u << 2) | (1u << 1);  // Bus Master + Memory Space
+    pci_write16(pci_bus, pci_slot, pci_func, 0x04, pci_cmd);
+    uart_print("[XHCI] PCI CMD after="); uart_print_hex(pci_read16(pci_bus, pci_slot, pci_func, 0x04));
+    uart_print("\n");
+
+    mmio_base = (volatile uint8_t*)(bar.addr + MMIO_BASE);
+	if (bar.addr > 0xFFFFFFFF) {
+		mmio_base = (volatile uint8_t*)mmio_bump;
+		mmio_bump += bar.size;
+    }
+	uart_print("[XHCI] MMIO base="); uart_print_hex((uint64_t)mmio_base);
+	uart_print("\n");
+    for (uint64_t off = 0; off < bar.size; off += 4096) {
+        uint64_t result = virt_page_allocator->alloc_virt_page((uint64_t)mmio_base + off,
+            bar.addr + off,
+            VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
+		uart_print("[XHCI] MMIO mapping off="); uart_print_hex(off);
+		uart_print(" virt=");            uart_print_hex(result);
+		uart_print(" phys=");            uart_print_hex(bar.addr + off);
+		uart_print("\n");
+    }
+
+    // 2. Capability 레지스터
+    cap_length = *(volatile uint8_t*)mmio_base;
+    db_offset = *cap_reg32(XHCI_DBOFF) & ~0x3u;
+    rt_offset = *cap_reg32(XHCI_RTSOFF) & ~0x1Fu;
+
+    uint32_t hcs1 = *cap_reg32(XHCI_HCSPARAMS1);
+    max_slots = hcs1 & 0xFF;
+    max_ports = (hcs1 >> 24) & 0xFF;
+
+    uint32_t hcc1 = *cap_reg32(XHCI_HCCPARAMS1);
+    stride = (hcc1 & (1u << 2)) ? 64 : 32;
+
+    uart_print("[XHCI] cap_length="); uart_print_hex(cap_length);
+    uart_print(" db_offset=");        uart_print_hex(db_offset);
+    uart_print(" rt_offset=");        uart_print_hex(rt_offset);
+    uart_print("\n[XHCI] max_slots="); uart_print_hex(max_slots);
+    uart_print(" max_ports=");         uart_print_hex(max_ports);
+    uart_print(" stride=");            uart_print_hex(stride);
+    uart_print("\n");
+
+    for (uint8_t i = 0; i <= max_slots; i++)
+        devices.push_back(USBDevice{});
+
+    // 3. 리셋 (BIOS handoff 포함)
+    reset_controller();
+
+    // 4. MaxSlotsEn
+    *op_reg32(XHCI_CONFIG) = max_slots;
+    uart_print("[XHCI] CONFIG="); uart_print_hex(*op_reg32(XHCI_CONFIG));
+    uart_print("\n");
+
+    // 5. DCBAA / CMD / EVT
+    setup_dcbaa();
+    setup_cmd_ring();
+    setup_evt_ring();
+
+    // 6. RUN
+    uart_print("[XHCI] USBCMD before RUN="); uart_print_hex(*op_reg32(XHCI_USBCMD));
+    uart_print("\n");
+    //*op_reg32(XHCI_USBCMD) |= XHCI_CMD_RUN;
+    *op_reg32(XHCI_USBCMD) |= XHCI_CMD_RUN | XHCI_CMD_INTE;
+    while (*op_reg32(XHCI_USBSTS) & XHCI_STS_HCH);
+    uart_print("[XHCI] running! USBSTS="); uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print(" USBCMD=");               uart_print_hex(*op_reg32(XHCI_USBCMD));
+    uart_print("\n");
+
+    // 7. 포트 스캔
+    uart_print("[XHCI] scan ports max="); uart_print_hex(max_ports);
+    uart_print("\n");
+    scan_ports();
+
+    uart_print("[XHCI] ===== init done =====\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  포트 스캔
+// ═══════════════════════════════════════════════════════════════
+/*void XHCIController::scan_ports() {
+    // 포트 건드리지 않고 Enable Slot만 테스트
+    uart_print("[TEST] sending Enable Slot without port reset\n");
+    TRB cmd{};
+    cmd.control = TRB_TYPE_FIELD(TRB_TYPE_ENABLE_SLOT);
+    send_command(cmd);
+    uart_print("[TEST] done\n");
+}*/
+void XHCIController::scan_ports() {
+    for (uint8_t p = 1; p <= max_ports; p++) {
+        uint32_t portsc = *op_reg32(XHCI_PORTSC(p - 1));
+        uart_print("[PORT] "); uart_print_hex(p);
+        uart_print(" PORTSC="); uart_print_hex(portsc);
+        uart_print(portsc & PORTSC_CCS ? " CONNECTED\n" : " empty\n");
+
+        if (portsc & PORTSC_CCS) {
+            // CSC가 세팅되어 있으면 이미 이벤트 발생 전 상태
+            // → 이벤트 기다리지 말고 바로 포트 처리
+            if (portsc & PORTSC_CSC) {
+                uart_print("[PORT] before CSC clear USBSTS=");
+                uart_print_hex(*op_reg32(XHCI_USBSTS));
+                uart_print("\n");
+
+                *op_reg32(XHCI_PORTSC(p - 1)) = (1u << 17);
+
+                uart_print("[PORT] after CSC clear USBSTS=");
+                uart_print_hex(*op_reg32(XHCI_USBSTS));
+                uart_print("\n");
+            }
+            else {
+                wait_event(TRB_TYPE_PORT_STS_EVT);
+                uart_print("[PORT] got PSC event\n");
+            }
+            handle_port(p);
+        }
+    }
+}
+void XHCIController::handle_port(uint8_t port) {
+    volatile uint32_t* portsc_reg = op_reg32(XHCI_PORTSC(port - 1));
+    uint32_t ps = *portsc_reg;
+    //uint32_t rw1c_mask = (1u << 17) | (1u << 18) | (1u << 19) | (1u << 20) | (1u << 21) | (1u << 22) | (1u << 23);
+
+    //*portsc_reg = (ps & ~rw1c_mask) | PORTSC_PR;
+    //wait_event(TRB_TYPE_PORT_STS_EVT);
+    uart_print("[PORT] USBSTS before PR=");
+    uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+    *portsc_reg = ps | PORTSC_PR;
+
+    uart_print("[PORT] USBSTS after PR=");
+    uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+
+    while (!(*portsc_reg & PORTSC_PRC));
+
+    uart_print("[PORT] USBSTS before PRC clear=");
+    uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+
+    ps = *portsc_reg;
+    *portsc_reg = ps | PORTSC_PRC;
+
+    uart_print("[PORT] USBSTS after PRC clear=");
+    uart_print_hex(*op_reg32(XHCI_USBSTS));
+    uart_print("\n");
+
+    ps = *portsc_reg;
+    uart_print("[PORT] after reset PORTSC="); uart_print_hex(ps);
+    uart_print("\n");
+
+    if (!(ps & PORTSC_PED)) {
+        uart_print("[PORT] reset failed PED=0\n");
+        return;
+    }
+
+    uint8_t speed = (ps >> 10) & 0xF;
+    uart_print("[PORT] speed="); uart_print_hex(speed);
+    uart_print(" (1=Full 2=Low 3=High 4=Super)\n");
+
+    uint8_t slot_id = 0;
+    if (!enable_slot(port, speed, slot_id)) return;
+
+    USBDevice dev = USBDevice{};
+    dev.slot_id = slot_id;
+    dev.speed = speed;
+    dev.port = port;
+    dev.mps_ctrl = (speed >= USB_SPEED_SUPER) ? 512 : 8;
+    dev.valid = true;
+
+    ring_init(dev.ctrl_ring, XFER_RING_SIZE);
+    ring_init(dev.out_ring, XFER_RING_SIZE);
+    ring_init(dev.in_ring, XFER_RING_SIZE);
+    dev.dev_ctx_phys = alloc_page(dev.dev_ctx_virt);
+    dev.in_ctx_phys = alloc_page(dev.in_ctx_virt);
+
+    uart_print("[PORT] ctrl_ring="); uart_print_hex(dev.ctrl_ring.phys);
+    uart_print(" out_ring=");        uart_print_hex(dev.out_ring.phys);
+    uart_print(" in_ring=");         uart_print_hex(dev.in_ring.phys);
+    uart_print("\n[PORT] dev_ctx="); uart_print_hex(dev.dev_ctx_phys);
+    uart_print(" in_ctx=");          uart_print_hex(dev.in_ctx_phys);
+    uart_print("\n");
+
+    dcbaa[slot_id] = dev.dev_ctx_phys;
+    devices[slot_id] = dev;
+
+    uart_print("[PORT] Address Device BSR=1\n");
+    if (!address_device(dev, true)) return;
+
+    uart_print("[PORT] GET_DESCRIPTOR\n");
+    USBDeviceDescriptor dd{};
+    if (!get_device_descriptor(dev, dd)) return;
+
+    uart_print("[PORT] class=");  uart_print_hex(dd.bDeviceClass);
+    uart_print(" mps0=");         uart_print_hex(dd.bMaxPacketSize0);
+    uart_print(" vid=");          uart_print_hex(dd.idVendor);
+    uart_print(" pid=");          uart_print_hex(dd.idProduct);
+    uart_print("\n");
+
+    dev.mps_ctrl = dd.bMaxPacketSize0;
+
+    uart_print("[PORT] Address Device BSR=0\n");
+    if (!address_device(dev, false)) return;
+
+    uint64_t tmp_virt2;
+    uint64_t tmp_phys2 = alloc_page(tmp_virt2);
+
+    uart_print("[PORT] GET_CONFIG_DESCRIPTOR\n");
+    if (get_config_descriptor(dev, (uint8_t*)tmp_virt2, 255)) {
+        USBConfigDescriptor* cfg = (USBConfigDescriptor*)tmp_virt2;
+        uart_print("[PORT] numIf=");    uart_print_hex(cfg->bNumInterfaces);
+        uart_print(" totalLen=");       uart_print_hex(cfg->wTotalLength);
+        uart_print(" configVal=");      uart_print_hex(cfg->bConfigurationValue);
+        uart_print("\n");
+
+        if (configure_endpoints(dev, (uint8_t*)tmp_virt2, cfg->wTotalLength)) {
+            uart_print("[PORT] SET_CONFIGURATION val=");
+            uart_print_hex(cfg->bConfigurationValue);
+            uart_print("\n");
+            if (set_configuration(dev, cfg->bConfigurationValue))
+                try_create_msc_disk(dev);
+        }
+    }
+    else {
+        uart_print("[PORT] GET_CONFIG_DESCRIPTOR failed\n");
+    }
+    free_page(tmp_phys2, tmp_virt2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Enable Slot
+// ═══════════════════════════════════════════════════════════════
+bool XHCIController::enable_slot(uint8_t port, uint8_t speed, uint8_t& slot_id_out) {
+    uart_print("[CMD] Enable Slot\n");
+    TRB cmd{};
+    cmd.control = TRB_TYPE_FIELD(TRB_TYPE_ENABLE_SLOT);
+    TRB evt = send_command(cmd);
+
+    if (TRB_GET_CC(evt) != CC_SUCCESS) {
+        uart_print("[CMD] Enable Slot FAILED cc="); uart_print_hex(TRB_GET_CC(evt));
+        uart_print("\n");
+        return false;
+    }
+    slot_id_out = TRB_GET_SLOT(evt);
+    uart_print("[CMD] slot="); uart_print_hex(slot_id_out);
+    uart_print("\n");
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Address Device
+// ═══════════════════════════════════════════════════════════════
+bool XHCIController::address_device(USBDevice& dev, bool bsr) {
+    uart_print("[CMD] Address Device slot="); uart_print_hex(dev.slot_id);
+    uart_print(" BSR=");                      uart_print_hex(bsr);
+    uart_print("\n");
+
+    InputControlContext* icc = (InputControlContext*)dev.in_ctx_virt;
+    memset(icc, 0, stride);
+    icc->add_flags = (1u << 0) | (1u << 1);
+
+    SlotContext* sc = (SlotContext*)(dev.in_ctx_virt + stride);
+    memset(sc, 0, stride);
+    sc->dw0 = (1u << 27) | ((uint32_t)dev.speed << 20);
+    sc->dw2 = (uint32_t)dev.port << 16;
+
+    EndpointContext* ep0 = (EndpointContext*)(dev.in_ctx_virt + stride * 2);
+    memset(ep0, 0, stride);
+    ep0->dw1 = ((uint32_t)dev.mps_ctrl << 16) | (EP_TYPE_CTRL << 3) | (3u << 1);
+    ep0->tr_dequeue_ptr = dev.ctrl_ring.phys | 1u;
+
+    uart_print("  SC dw0=");    uart_print_hex(sc->dw0);
+    uart_print(" dw2=");        uart_print_hex(sc->dw2);
+    uart_print("\n  EP0 dw1="); uart_print_hex(ep0->dw1);
+    uart_print(" deq=");        uart_print_hex(ep0->tr_dequeue_ptr);
+    uart_print("\n");
+
+    TRB cmd{};
+    cmd.param = dev.in_ctx_phys;
+    cmd.control = TRB_TYPE_FIELD(TRB_TYPE_ADDRESS_DEVICE)
+        | ((uint32_t)dev.slot_id << 24)
+        | (bsr ? (1u << 9) : 0u);
+
+    TRB evt = send_command(cmd);
+    if (TRB_GET_CC(evt) != CC_SUCCESS) {
+        uart_print("[CMD] Address Device FAILED cc="); uart_print_hex(TRB_GET_CC(evt));
+        uart_print("\n");
+        return false;
+    }
+    uart_print("[CMD] Address Device OK\n");
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Control Transfer
+// ═══════════════════════════════════════════════════════════════
+int XHCIController::ctrl_transfer(USBDevice& dev, SetupPacket& setup,
+    void* data_phys, uint16_t length, bool in) {
+    uart_print("[CTRL] req="); uart_print_hex(setup.bRequest);
+    uart_print(" wVal=");      uart_print_hex(setup.wValue);
+    uart_print(" len=");       uart_print_hex(length);
+    uart_print(" in=");        uart_print_hex(in);
+    uart_print("\n");
+
+    Ring& r = dev.ctrl_ring;
+    uint8_t cycle;
+
+    TRB* s = ring_enqueue(r, cycle);
+    memcpy(&s->param, &setup, 8);
+    s->status = 8;
+    uint32_t trt = (length == 0) ? 0 : (in ? 3 : 2);
+    s->control = TRB_TYPE_FIELD(TRB_TYPE_SETUP_STAGE)
+        | (1u << 6) | (trt << 16) | TRB_CYCLE(cycle);
+
+    if (length > 0) {
+        TRB* d = ring_enqueue(r, cycle);
+        d->param = (uint64_t)data_phys;
+        d->status = length;
+        d->control = TRB_TYPE_FIELD(TRB_TYPE_DATA_STAGE)
+            | (in ? (1u << 16) : 0u) | TRB_CYCLE(cycle);
+    }
+
+    TRB* st = ring_enqueue(r, cycle);
+    st->param = 0;
+    st->status = 0;
+    st->control = TRB_TYPE_FIELD(TRB_TYPE_STATUS_STAGE)
+        | (length > 0 && !in ? (1u << 16) : 0u)
+        | (1u << 5) | TRB_CYCLE(cycle);
+
+    __asm__ volatile ("sfence" ::: "memory");
+    ring_doorbell(dev.slot_id, 1);
+
+    TRB evt = wait_event(TRB_TYPE_TRANSFER_EVT);
+    uint8_t cc = TRB_GET_CC(evt);
+    uart_print("[CTRL] "); uart_print(cc == CC_SUCCESS || cc == CC_SHORT_PKT ? "OK" : "FAILED");
+    uart_print(" cc="); uart_print_hex(cc);
+    uart_print("\n");
+    return (cc == CC_SUCCESS || cc == CC_SHORT_PKT) ? 0 : -((int)cc);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Bulk Transfer
+// ═══════════════════════════════════════════════════════════════
+int XHCIController::bulk_out(USBDevice& dev, void* phys, uint32_t length) {
+    uart_print("[BULK OUT] len="); uart_print_hex(length);
+    uart_print("\n");
+    Ring& r = dev.out_ring;
+    uint8_t cycle;
+    TRB* t = ring_enqueue(r, cycle);
+    t->param = (uint64_t)phys;
+    t->status = length;
+    t->control = TRB_TYPE_FIELD(TRB_TYPE_NORMAL) | (1u << 5) | TRB_CYCLE(cycle);
+    __asm__ volatile ("sfence" ::: "memory");
+    ring_doorbell(dev.slot_id, dev.ep_bulk_out * 2 - 1);
+    TRB evt = wait_event(TRB_TYPE_TRANSFER_EVT);
+    uint8_t cc = TRB_GET_CC(evt);
+    uart_print("[BULK OUT] cc="); uart_print_hex(cc);
+    uart_print("\n");
+    return (cc == CC_SUCCESS || cc == CC_SHORT_PKT) ? 0 : -1;
+}
+
+int XHCIController::bulk_in(USBDevice& dev, void* phys, uint32_t length) {
+    uart_print("[BULK IN] len="); uart_print_hex(length);
+    uart_print("\n");
+    Ring& r = dev.in_ring;
+    uint8_t cycle;
+    TRB* t = ring_enqueue(r, cycle);
+    t->param = (uint64_t)phys;
+    t->status = length;
+    t->control = TRB_TYPE_FIELD(TRB_TYPE_NORMAL) | (1u << 5) | TRB_CYCLE(cycle);
+    __asm__ volatile ("sfence" ::: "memory");
+    ring_doorbell(dev.slot_id, dev.ep_bulk_in * 2);
+    TRB evt = wait_event(TRB_TYPE_TRANSFER_EVT);
+    uint8_t cc = TRB_GET_CC(evt);
+    uart_print("[BULK IN] cc="); uart_print_hex(cc);
+    uart_print("\n");
+    return (cc == CC_SUCCESS || cc == CC_SHORT_PKT) ? 0 : -1;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  GET_DESCRIPTOR
+// ═══════════════════════════════════════════════════════════════
+bool XHCIController::get_device_descriptor(USBDevice& dev, USBDeviceDescriptor& out) {
+    uint64_t buf_virt, buf_phys = alloc_page(buf_virt);
+    SetupPacket sp{};
+    sp.bmRequestType = 0x80;
+    sp.bRequest = USB_REQ_GET_DESCRIPTOR;
+    sp.wValue = (uint16_t)(USB_DESC_DEVICE << 8);
+    sp.wLength = sizeof(USBDeviceDescriptor);
+    int r = ctrl_transfer(dev, sp, (void*)buf_phys, sp.wLength, true);
+    if (r == 0) memcpy(&out, (void*)buf_virt, sizeof(USBDeviceDescriptor));
+    free_page(buf_phys, buf_virt);
+    return r == 0;
+}
+
+bool XHCIController::get_config_descriptor(USBDevice& dev, uint8_t* buf, uint16_t len) {
+    uint64_t buf_virt, buf_phys = alloc_page(buf_virt);
+    SetupPacket sp{};
+    sp.bmRequestType = 0x80;
+    sp.bRequest = USB_REQ_GET_DESCRIPTOR;
+    sp.wValue = (uint16_t)(USB_DESC_CONFIG << 8);
+    sp.wLength = len;
+    int r = ctrl_transfer(dev, sp, (void*)buf_phys, len, true);
+    if (r == 0) memcpy(buf, (void*)buf_virt, len);
+    free_page(buf_phys, buf_virt);
+    return r == 0;
+}
+
+bool XHCIController::set_configuration(USBDevice& dev, uint8_t config_val) {
+    SetupPacket sp{};
+    sp.bmRequestType = 0x00;
+    sp.bRequest = USB_REQ_SET_CONFIG;
+    sp.wValue = config_val;
+    return ctrl_transfer(dev, sp, nullptr, 0, false) == 0;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  configure_endpoints
+// ═══════════════════════════════════════════════════════════════
+bool XHCIController::configure_endpoints(USBDevice& dev, uint8_t* buf, uint16_t total_len) {
+    uint8_t* p = buf;
+    uint8_t* end = buf + total_len;
+    bool is_msc = false;
+
+    while (p < end && p[0] >= 2) {
+        uint8_t len = p[0];
+        uint8_t type = p[1];
+        if (type == USB_DESC_INTERFACE) {
+            USBInterfaceDescriptor* ifd = (USBInterfaceDescriptor*)p;
+            is_msc = (ifd->bInterfaceClass == USB_CLASS_MSC &&
+                ifd->bInterfaceSubClass == USB_SUBCLASS_SCSI &&
+                ifd->bInterfaceProtocol == USB_PROTO_BOT);
+            uart_print("  [IF] class="); uart_print_hex(ifd->bInterfaceClass);
+            uart_print(" sub=");         uart_print_hex(ifd->bInterfaceSubClass);
+            uart_print(" proto=");       uart_print_hex(ifd->bInterfaceProtocol);
+            uart_print(is_msc ? " MSC!\n" : "\n");
+        }
+        else if (type == USB_DESC_ENDPOINT && is_msc) {
+            USBEndpointDescriptor* epd = (USBEndpointDescriptor*)p;
+            bool   in_ep = (epd->bEndpointAddress & 0x80) != 0;
+            uint8_t ep_num = epd->bEndpointAddress & 0x0F;
+            uart_print("  [EP] addr="); uart_print_hex(epd->bEndpointAddress);
+            uart_print(" mps=");        uart_print_hex(epd->wMaxPacketSize);
+            uart_print(in_ep ? " IN\n" : " OUT\n");
+            if (in_ep) dev.ep_bulk_in = ep_num;
+            else       dev.ep_bulk_out = ep_num;
+            dev.mps_bulk = epd->wMaxPacketSize;
+        }
+        p += len;
+    }
+
+    if (!dev.ep_bulk_in || !dev.ep_bulk_out) {
+        uart_print("[EP] no bulk EP found\n");
+        return false;
+    }
+
+    InputControlContext* icc = (InputControlContext*)dev.in_ctx_virt;
+    memset((void*)dev.in_ctx_virt, 0, 4096);
+
+    uint8_t out_idx = dev.ep_bulk_out * 2 - 1;
+    uint8_t in_idx = dev.ep_bulk_in * 2;
+    icc->add_flags = (1u << 0) | (1u << out_idx) | (1u << in_idx);
+
+    uart_print("[EP] out_idx=");   uart_print_hex(out_idx);
+    uart_print(" in_idx=");        uart_print_hex(in_idx);
+    uart_print(" add_flags=");     uart_print_hex(icc->add_flags);
+    uart_print("\n");
+
+    SlotContext* sc = (SlotContext*)(dev.in_ctx_virt + stride);
+    uint8_t ce = (in_idx > out_idx) ? in_idx : out_idx;
+    sc->dw0 = ((uint32_t)ce << 27) | ((uint32_t)dev.speed << 20);
+    sc->dw2 = (uint32_t)dev.port << 16;
+
+    EndpointContext* ep0 = (EndpointContext*)(dev.in_ctx_virt + stride * 2);
+    ep0->dw1 = ((uint32_t)dev.mps_ctrl << 16) | (EP_TYPE_CTRL << 3) | (3u << 1);
+    ep0->tr_dequeue_ptr = dev.ctrl_ring.phys | 1u;
+
+    EndpointContext* epout = (EndpointContext*)(dev.in_ctx_virt + stride * (out_idx + 1));
+    epout->dw1 = ((uint32_t)dev.mps_bulk << 16) | (EP_TYPE_BULK_OUT << 3) | (3u << 1);
+    epout->tr_dequeue_ptr = dev.out_ring.phys | 1u;
+    epout->dw4 = dev.mps_bulk;
+
+    EndpointContext* epin = (EndpointContext*)(dev.in_ctx_virt + stride * (in_idx + 1));
+    epin->dw1 = ((uint32_t)dev.mps_bulk << 16) | (EP_TYPE_BULK_IN << 3) | (3u << 1);
+    epin->tr_dequeue_ptr = dev.in_ring.phys | 1u;
+    epin->dw4 = dev.mps_bulk;
+
+    uart_print("[CMD] Configure Endpoint\n");
+    TRB cmd{};
+    cmd.param = dev.in_ctx_phys;
+    cmd.control = TRB_TYPE_FIELD(TRB_TYPE_CONFIG_EP)
+        | ((uint32_t)dev.slot_id << 24);
+    TRB evt = send_command(cmd);
+    bool ok = TRB_GET_CC(evt) == CC_SUCCESS;
+    uart_print("[EP] Configure "); uart_print(ok ? "OK\n" : "FAILED\n");
+    return ok;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MSC 디스크 생성
+// ═══════════════════════════════════════════════════════════════
+void XHCIController::try_create_msc_disk(USBDevice& dev) {
+    if (!dev.ep_bulk_in || !dev.ep_bulk_out) return;
+    uart_print("[XHCI] MSC disk port="); uart_print_hex(dev.port);
+    uart_print(" slot=");                uart_print_hex(dev.slot_id);
+    uart_print("\n");
+    USBMSCDisk* disk = new USBMSCDisk(this, &dev, pci_bus, pci_slot, pci_func);
+    disk->init();
+    if (on_disk_found) on_disk_found(disk);
+}

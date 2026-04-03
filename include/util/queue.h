@@ -17,7 +17,7 @@ class queue {
         volatile void* curr = front_page;
         while (curr != nullptr) {
             void* next = *((void**)curr);
-            phy_page_allocator->free_phy_page((uint64_t)curr - HHDM_BASE);
+            phy_page_allocator->put_page((uint64_t)curr - HHDM_BASE);
             curr = next;
         }
     }
@@ -35,17 +35,10 @@ class queue {
 
         *((T*)((uint8_t*)back_page + back_index + 8)) = item;
         back_index += aligned_size;
-        if (back_page == front_page && back_index > front_index + 8) {
-            uart_print("error!");
-        }
     }
     constexpr T dequeue() {
         // isEmpty() 체크는 호출하는 쪽이나 여기서 확실히!
         T item = *((T*)((uint8_t*)front_page + front_index + 8));
-
-        if (front_page != back_page && front_index + 8 < back_index) {
-            uart_print("error!");
-        }
         size_t aligned_size = (sizeof(T) + 7) & ~7;
         front_index += aligned_size;
 
@@ -54,7 +47,7 @@ class queue {
         if (front_index + aligned_size > PageSize - 8 && front_page != back_page) {
             volatile void* temp_page = front_page;
             front_page = *((void**)front_page);
-            phy_page_allocator->free_phy_page((uint64_t)temp_page - HHDM_BASE);
+            phy_page_allocator->put_page((uint64_t)temp_page - HHDM_BASE);
             front_index = 0;
         }
         else if (front_page == back_page && front_index == back_index) {
@@ -66,12 +59,13 @@ class queue {
         return item;
     }
     constexpr bool isEmpty() const {
-        if (front_page == back_page) {
-            if (front_index < back_index) {
-                uart_print("error!!!");
-            }
-        }
         return (front_page == back_page) && (front_index == back_index);
+    }
+    constexpr T* peek_back() {
+        if (isEmpty()) return nullptr;
+        size_t aligned_size = (sizeof(T) + 7) & ~7;
+        size_t last_index = back_index - aligned_size;
+        return (T*)((uint8_t*)back_page + last_index + 8);
     }
 private:
     volatile void* front_page;

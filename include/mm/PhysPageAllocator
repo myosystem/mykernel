@@ -6,16 +6,21 @@
 class PhysPageAllocator {
     private:
     uint64_t total_pages;
-	uint64_t used_pages;
-	uint64_t* bitmap;
+    uint64_t used_pages;
+    uint64_t* bitmap;
+    uint64_t* refcount;
 public:
     uint64_t alloc_phy_page();
-    void free_phy_page(uint64_t addr);
+	uint64_t alloc_phy_pages(uint64_t page_count);
+    uint64_t get_page(uint64_t addr);
+	uint64_t get_pages(uint64_t addr, uint64_t page_count);
+    uint64_t put_page(uint64_t addr);
+	uint64_t put_pages(uint64_t addr, uint64_t page_count);
     PhysPageAllocator();
-    void init(uint64_t* _bitmap, uint64_t _total_pages);
+    void init(uint64_t* _bitmap, uint64_t* _refcount, uint64_t _total_pages);
     uint64_t get_total_pages() const;
     uint64_t get_used_pages() const;
-	uint64_t get_free_pages() const;
+    uint64_t get_free_pages() const;
 };
 
 #endif

@@ -4,13 +4,13 @@
 #define MAX_SHARED_ITEMS 4096
 #define HANDLE_QUEUE_BASE 0xFFFF838000000000ULL
 #include "util/size.h"
-class Handle {
+class _handle {
 protected:
     int ref_count;
     uint8_t flags;
 public:
-    Handle() : ref_count(1) {}
-    virtual ~Handle() {}
+    _handle() : ref_count(1) {}
+    virtual ~_handle() {}
 
     // [ÂüÁ¶ Ä«¿îÆÃ]
     void grab() { ref_count++; }
@@ -26,15 +26,15 @@ public:
 
         // 2. ºó ½½·Ô Ã£±â
         uint64_t addr = HANDLE_QUEUE_BASE;
-        while ((((Handle*)addr)->flags & 0x1) != 0) {
+        while ((((_handle*)addr)->flags & 0x1) != 0) {
             addr += SHARED_SLOT_SIZE;
         }
-        ((Handle*)addr)->flags |= 0x1;
+        ((_handle*)addr)->flags |= 0x1;
         return (void*)addr;
     }
 
     static void operator delete(void* ptr) {
-        Handle* item = (Handle*)ptr;
+        _handle* item = (_handle*)ptr;
 		item->flags &= ~0x1;
     }
 };

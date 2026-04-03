@@ -87,12 +87,21 @@ void init_tss(uint64_t kernel_stack_phys, uint64_t ist1_phys) {
 }
 queue<size_t>* process_queue;
 uint8_t* process_queue_buf[sizeof(queue<size_t>)];
+
+HeapTree<KEvent>* time_event;
+uint8_t* time_event_buf[sizeof(HeapTree<KEvent>)];
+
+vector<KEvent>* xhci_event;
+uint8_t* xhci_event_buf[sizeof(vector<KEvent>)];
+
 Process* now_process = 0;
 void Process::init(uint64_t cs, uint64_t ss) {
     code_va_base = 0x400000;
+    time_slice = 10;
     pallocator = new (allocator_buffer) VirtPageAllocator();
     cr3 = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
     uint64_t lcr3 = virt_page_allocator->getCr3() + HHDM_BASE;
+    memset((void*)(cr3), 0, PageSize / 2); // f
     memcpy((void*)(cr3 + 256ull * 8), (void*)(lcr3 + 256ull * 8), 256ull * 8);
     pallocator->init(phy_page_allocator, cr3);
     user_stack_bottom = 0x00007FFFFFF000;
@@ -112,8 +121,6 @@ void Process::init(uint64_t cs, uint64_t ss) {
         *(--kernel_stack) = ss;
     }
     state = 1;
-	message_queue_head = nullptr;
-	message_queue_tail = nullptr;
 }
 void Process::addCode(void* code_addr) {
     uint64_t code = phy_page_allocator->alloc_phy_page();
@@ -127,9 +134,18 @@ void Process::setHeap() {
 }
 void init_process() {
     process_queue = new (process_queue_buf) queue<size_t>();
+	time_event = new (time_event_buf) HeapTree<KEvent>((void*)0xFFFF840000000000);
+    xhci_event = new (xhci_event_buf) vector<KEvent>;
 }
 void add_process(size_t index) {
     process_queue->enqueue(index);
+}
+Process* GetProcess(size_t index) {
+    Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
+    if ((result->state & 0b1) == 0) {
+        uart_print("error!!");
+    }
+    return result;
 }
 Process* next_process() {
     int index = process_queue->dequeue();
@@ -182,15 +198,15 @@ void Process::run_process() {
     );
     __builtin_unreachable();
 }
-bool Process::isAddrInMMap(uint64_t va) const {
+mmap_entry* Process::isAddrInMMap(uint64_t va) const {
     mmap_entry* entry = mmap_table;
     while (entry) {
         if (entry->va_start <= va && va <= entry->va_end) {
-            return true;
+            return entry;
         }
         entry = entry->next;
     }
-    return false;
+    return nullptr;
 }
 volatile uint32_t mmap_lock = 0;
 inline void _lockmmap() {
@@ -201,7 +217,7 @@ inline void _lockmmap() {
 inline void _unlockmmap() {
     __atomic_clear(&mmap_lock, __ATOMIC_RELEASE);
 }
-uint64_t Process::mmap(uint64_t size, uint64_t flags) {
+uint64_t Process::mmap(uint64_t size, uint64_t flags, uint64_t arg) {
 	if (size == 0) return ~0ULL;
 	_lockmmap();
     uint64_t page_count = (size + PageSize - 1) / PageSize;
@@ -228,53 +244,90 @@ uint64_t Process::mmap(uint64_t size, uint64_t flags) {
                 return ~0ULL; // 할당 불가
 			}
     mmap_entry* new_entry = (mmap_entry*)MMAP_ENTRY_BASE;
-    while (new_entry->flags & 0x01) {
+    while (new_entry->flags & MMAP_USED) {
         new_entry++;
     }
-    new_entry->flags = flags | 0x1;
+    new_entry->flags = flags | MMAP_USED;
     if (last) {
         last->next = new_entry;
 		new_entry->next = entry;
         new_entry->va_end = last->va_start - 1;
 		new_entry->va_start = last->va_start - page_count * PageSize;
+        new_entry->arg = arg;
     } else {
         mmap_table = new_entry;
         mmap_table->next = entry;
 		mmap_table->va_end = user_stack_top - 1;
 		mmap_table->va_start = user_stack_top - page_count * PageSize;
+		mmap_table->arg = arg;
     }
 	_unlockmmap();
 	return new_entry->va_start;
 }
-void Process::msg_recv(const char* msg, uint64_t flags) {
-    process_message_node* new_node = (process_message_node*)MESSAGE_QUEUE_BASE;
-    while (new_node->flags & 0x01) {
-        new_node++;
+bool Process::munmap(uint64_t va, uint64_t size) {
+    if (size == 0) return false;
+    _lockmmap();
+    uint64_t page_count = (size + PageSize - 1) / PageSize;
+    mmap_entry* entry = mmap_table;
+    mmap_entry* last = nullptr;
+    while (entry != nullptr) {
+        if (entry->va_start <= va && va <= entry->va_end) {
+            break;
+        }
+        last = entry;
+        entry = entry->next;
     }
-    new_node->flags = flags | 0x1;
-    memcpy(new_node->message, msg, sizeof(new_node->message));
-    new_node->next = nullptr;
-    if (message_queue_tail) {
-        message_queue_tail->next = new_node;
-        message_queue_tail = new_node;
+    if (entry == nullptr || va + page_count * PageSize - 1 > entry->va_end) {
+        _unlockmmap();
+        return false; // 해당 영역이 mmap된 영역과 일치하지 않음
+    }
+    if (entry->va_start == va && entry->va_end == va + page_count * PageSize - 1) {
+        // 완전히 일치하는 경우, 엔트리를 제거
+        if (last) {
+            last->next = entry->next;
+        } else {
+            mmap_table = entry->next;
+        }
+        entry->flags = 0; // 엔트리 재사용을 위해 플래그 초기화
+    } else if (entry->va_start == va) {
+        // 시작 부분이 일치하는 경우, 시작 주소를 조정
+        entry->va_start += page_count * PageSize;
+    } else if (entry->va_end == va + page_count * PageSize - 1) {
+        // 끝 부분이 일치하는 경우, 끝 주소를 조정
+        entry->va_end -= page_count * PageSize;
     } else {
-        message_queue_head = new_node;
-        message_queue_tail = new_node;
-    }
+        // 중간 부분이 일치하는 경우, 엔트리를 분할
+        mmap_entry* new_entry = (mmap_entry*)MMAP_ENTRY_BASE;
+        while (new_entry->flags & MMAP_USED) {
+            new_entry++;
+        }
+        new_entry->flags = entry->flags; // 기존 엔트리의 플래그 복사
+        new_entry->va_start = va + page_count * PageSize;
+        new_entry->va_end = entry->va_end;
+        new_entry->arg = entry->arg; // 기존 엔트리의 arg 복사
+        new_entry->next = entry->next;
+		entry->va_end = va - 1; // 기존 엔트리의 끝
+        entry->next = new_entry;
+	}
+    _unlockmmap();
+	return true;
 }
-bool Process::msg_pop(char* out_msg, uint64_t& out_flags) {
-    if (message_queue_head == nullptr) {
+void Process::msg_recv(msg_t msg) {
+    if (msg.type == MSG_MOUSE_MOVE) {
+        msg_t* last = msgq.peek_back();
+        if (last && last->type == MSG_MOUSE_MOVE) {
+            last->payload.params.arg[0] = msg.payload.params.arg[0];
+            last->payload.params.arg[1] = msg.payload.params.arg[1];
+            return;  // enqueue 없이 그냥 업데이트만
+        }
+    }
+    msgq.enqueue(msg);
+}
+bool Process::msg_pop(msg_t* msg) {
+    if (msgq.isEmpty()) {
         return false;
     }
-    process_message_node* node = message_queue_head;
-    message_queue_head = message_queue_head->next;
-    if (message_queue_head == nullptr) {
-        message_queue_tail = nullptr;
-    }
-    out_flags = node->flags & ~0x1;
-    memcpy(out_msg, node->message, sizeof(node->message));
-    node->flags = 0; // 해제
-	pallocator->phy_allocator->free_phy_page(pallocator->free_virt_page((uint64_t)node & ~0xFFFULL));
+	*msg = msgq.dequeue();
     return true;
 }
 uint64_t process_count = 0;

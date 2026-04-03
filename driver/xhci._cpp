@@ -1,0 +1,194 @@
+#include "driver/xhci.h"
+#include "arch/xhci_c.h"
+#include "mm/allocator"
+#include "util/memory.h"
+#include "debug/log.h"
+
+// ═══════════════════════════════════════════════════════════════
+//  생성자 / 소멸자
+// ═══════════════════════════════════════════════════════════════
+USBMSCDisk::USBMSCDisk(XHCIController* ctrl, USBDevice* dev,
+    uint16_t bus, uint16_t slot_pci, uint16_t func)
+    : Disk(bus, slot_pci, func, 0),   // port_or_ns=0 (USB는 슬롯으로 구분)
+    xhci(ctrl), usb_dev(dev)
+{
+    type = 3;  // Disk::type: USB MSC
+}
+
+USBMSCDisk::~USBMSCDisk() {
+    cleanup();
+    virt_page_allocator->free_virt_page(cbw_virt);
+    phy_page_allocator->put_page(cbw_phys);
+    virt_page_allocator->free_virt_page(csw_virt);
+    phy_page_allocator->put_page(csw_phys);
+    virt_page_allocator->free_virt_page(tmp_virt);
+    phy_page_allocator->put_page(tmp_phys);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  init – BOT 페이지 할당 & SCSI 초기화
+// ═══════════════════════════════════════════════════════════════
+void USBMSCDisk::init() {
+    // CBW, CSW, 임시 데이터용 물리 페이지 각각 할당
+    auto alloc = [&](uint64_t& phys, uint64_t& virt) {
+        phys = phy_page_allocator->alloc_phy_page();
+        virt = phys + MMIO_BASE;
+        virt_page_allocator->alloc_virt_page(virt, phys,
+            VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
+        memset((void*)virt, 0, 4096);
+        };
+    alloc(cbw_phys, cbw_virt);
+    alloc(csw_phys, csw_virt);
+    alloc(tmp_phys, tmp_virt);
+
+    // ── Test Unit Ready (드라이브가 준비됐는지 확인, 실패해도 계속) ──
+    for (int retry = 0; retry < 3; retry++) {
+        if (scsi_test_unit_ready()) break;
+        // 실패하면 Request Sense로 오류 클리어
+        uint8_t sense_cdb[6] = { SCSI_REQUEST_SENSE, 0, 0, 0, 18, 0 };
+        bot_transfer(sense_cdb, 6, tmp_phys, 18, true);
+    }
+
+    // ── Read Capacity 10 ──────────────────────────────────────
+    if (!scsi_read_capacity(total_sectors, sector_size)) {
+        uart_print("[USB MSC] Read Capacity failed\n");
+        return;
+    }
+
+    uart_print("[USB MSC] Ready: ");
+    uart_print_hex((uint32_t)(total_sectors >> 32));
+    uart_print_hex((uint32_t)total_sectors);
+    uart_print(" sectors, block=");
+    uart_print_hex(sector_size);
+    uart_print("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BOT Transfer
+//  CBW → [Data] → CSW
+// ═══════════════════════════════════════════════════════════════
+int USBMSCDisk::bot_transfer(const uint8_t* cdb, uint8_t cdb_len,
+    uint64_t data_phys, uint32_t data_len, bool is_in) {
+    // ── CBW 구성 ─────────────────────────────────────────────
+    BOT_CBW* cbw = (BOT_CBW*)cbw_virt;
+    memset(cbw, 0, sizeof(BOT_CBW));
+    cbw->dCBWSignature = BOT_CBW_SIGNATURE;
+    cbw->dCBWTag = tag_counter++;
+    cbw->dCBWDataTransferLength = data_len;
+    cbw->bmCBWFlags = is_in ? 0x80 : 0x00;
+    cbw->bCBWLUN = 0;
+    cbw->bCBWCBLength = cdb_len;
+    memcpy(cbw->CBWCB, cdb, cdb_len);
+
+    // ── CBW 전송 (Bulk OUT) ───────────────────────────────────
+    if (xhci->bulk_out(*usb_dev, (void*)cbw_phys, sizeof(BOT_CBW)) != 0) {
+        uart_print("[USB MSC] BOT CBW send failed\n");
+        return -1;
+    }
+
+    // ── 데이터 단계 (있을 때만) ───────────────────────────────
+    if (data_len > 0) {
+        int r;
+        if (is_in)
+            r = xhci->bulk_in(*usb_dev, (void*)data_phys, data_len);
+        else
+            r = xhci->bulk_out(*usb_dev, (void*)data_phys, data_len);
+
+        if (r != 0) {
+            uart_print("[USB MSC] BOT Data phase failed\n");
+            return -2;
+        }
+    }
+
+    // ── CSW 수신 (Bulk IN, 13 bytes) ──────────────────────────
+    memset((void*)csw_virt, 0, sizeof(BOT_CSW));
+    if (xhci->bulk_in(*usb_dev, (void*)csw_phys, sizeof(BOT_CSW)) != 0) {
+        uart_print("[USB MSC] BOT CSW recv failed\n");
+        return -3;
+    }
+
+    BOT_CSW* csw = (BOT_CSW*)csw_virt;
+    if (csw->dCSWSignature != BOT_CSW_SIGNATURE) {
+        uart_print("[USB MSC] CSW signature mismatch\n");
+        return -4;
+    }
+    if (csw->dCSWTag != cbw->dCBWTag) {
+        uart_print("[USB MSC] CSW tag mismatch\n");
+        return -5;
+    }
+    if (csw->bCSWStatus != BOT_CSW_GOOD) {
+        return -((int)csw->bCSWStatus + 10);
+    }
+
+    return 0;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SCSI 래퍼들
+// ═══════════════════════════════════════════════════════════════
+bool USBMSCDisk::scsi_test_unit_ready() {
+    uint8_t cdb[6] = { SCSI_TEST_UNIT_READY, 0, 0, 0, 0, 0 };
+    return bot_transfer(cdb, 6, 0, 0, false) == 0;
+}
+
+bool USBMSCDisk::scsi_read_capacity(uint64_t& sectors_out, uint32_t& block_size_out) {
+    uint8_t cdb[10] = { SCSI_READ_CAPACITY10, 0,0,0,0,0,0,0,0,0 };
+    // 응답: 8바이트 (Last LBA 4B big-endian + Block Size 4B big-endian)
+    memset((void*)tmp_virt, 0, 8);
+    if (bot_transfer(cdb, 10, tmp_phys, 8, true) != 0)
+        return false;
+
+    uint8_t* r = (uint8_t*)tmp_virt;
+    uint32_t last_lba = ((uint32_t)r[0] << 24) | ((uint32_t)r[1] << 16)
+        | ((uint32_t)r[2] << 8) | (uint32_t)r[3];
+    uint32_t block_size = ((uint32_t)r[4] << 24) | ((uint32_t)r[5] << 16)
+        | ((uint32_t)r[6] << 8) | (uint32_t)r[7];
+
+    sectors_out = (uint64_t)last_lba + 1;
+    block_size_out = block_size;
+    return true;
+}
+
+int USBMSCDisk::scsi_read10(uint64_t lba, uint16_t count, uint64_t phys_buf) {
+    uint8_t cdb[10] = {
+        SCSI_READ10,
+        0,
+        (uint8_t)(lba >> 24), (uint8_t)(lba >> 16),
+        (uint8_t)(lba >> 8), (uint8_t)(lba),
+        0,
+        (uint8_t)(count >> 8), (uint8_t)(count),
+        0
+    };
+    uint32_t len = (uint32_t)count * sector_size;
+    return bot_transfer(cdb, 10, phys_buf, len, true);
+}
+
+int USBMSCDisk::scsi_write10(uint64_t lba, uint16_t count, uint64_t phys_buf) {
+    uint8_t cdb[10] = {
+        SCSI_WRITE10,
+        0,
+        (uint8_t)(lba >> 24), (uint8_t)(lba >> 16),
+        (uint8_t)(lba >> 8), (uint8_t)(lba),
+        0,
+        (uint8_t)(count >> 8), (uint8_t)(count),
+        0
+    };
+    uint32_t len = (uint32_t)count * sector_size;
+    return bot_transfer(cdb, 10, phys_buf, len, false);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Disk 인터페이스 구현
+// ═══════════════════════════════════════════════════════════════
+
+// buf는 Disk 기반 클래스에서 이미 물리 주소를 보장함
+// (NVMeDisk와 동일한 규약 적용)
+int USBMSCDisk::read_sector(uint64_t lba, uint32_t count, void* buf) {
+    // count가 크면 4KiB(=sector_size*8) 단위로 나눠서 전송
+    // 지금은 단순하게 한 번에 전송 (4KiB 이하 가정)
+    return scsi_read10(lba, (uint16_t)count, (uint64_t)buf);
+}
+
+int USBMSCDisk::write_sector(uint64_t lba, uint32_t count, const void* buf) {
+    return scsi_write10(lba, (uint16_t)count, (uint64_t)buf);
+}
