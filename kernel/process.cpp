@@ -2,6 +2,7 @@
 #include "util/memory.h"
 #include "util/util.h"
 #include "debug/log.h"
+#include "arch/idt.h"
 #define PHYS_TO_HHDM(pa) ((void *)((uint64_t)(pa) + HHDM_BASE))
 // todo - GPT를 코어마다 따로 둘 수 있도록 나중에 페이지기반으로 코어개수만큼 생성해줘야함
 alignas(16) static uint8_t gdt[128];
@@ -95,9 +96,9 @@ vector<KEvent>* xhci_event;
 uint8_t* xhci_event_buf[sizeof(vector<KEvent>)];
 
 Process* now_process = 0;
-void Process::init(uint64_t cs, uint64_t ss) {
+void Process::init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster) {
     code_va_base = 0x400000;
-    time_slice = 10;
+    time_slice = 50;
     pallocator = new (allocator_buffer) VirtPageAllocator();
     cr3 = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
     uint64_t lcr3 = virt_page_allocator->getCr3() + HHDM_BASE;
@@ -114,6 +115,8 @@ void Process::init(uint64_t cs, uint64_t ss) {
     *(--kernel_stack) = cs;  // cs
     *(--kernel_stack) = (uint64_t)code_va_base; // rip
 	mmap_table = nullptr;
+	current_partition = partition;
+	this->cwd_cluster = cwd_cluster;
     for (int i = 0; i < 15; i++) {
         *(--kernel_stack) = 0;
     }
@@ -121,6 +124,12 @@ void Process::init(uint64_t cs, uint64_t ss) {
         *(--kernel_stack) = ss;
     }
     state = 1;
+    File* stdin = new STDIn();
+	File* stdout = new STDOut();
+	File* stderr = new STDOut();
+	open_files.push_back(stdin);
+	open_files.push_back(stdout);
+	open_files.push_back(stderr);
 }
 void Process::addCode(void* code_addr) {
     uint64_t code = phy_page_allocator->alloc_phy_page();
@@ -138,6 +147,9 @@ void init_process() {
     xhci_event = new (xhci_event_buf) vector<KEvent>;
 }
 void add_process(size_t index) {
+	if (index == IDLE_PROCESS_PID) {
+        return; // idle은 큐에 넣지 않음
+    }
     process_queue->enqueue(index);
 }
 Process* GetProcess(size_t index) {
@@ -148,6 +160,7 @@ Process* GetProcess(size_t index) {
     return result;
 }
 Process* next_process() {
+	if (process_queue->isEmpty()) return idle_process;
     int index = process_queue->dequeue();
     Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
     if ((result->state & 0b1) == 0) {
@@ -157,17 +170,33 @@ Process* next_process() {
 }
 __attribute__((noreturn))
 void Process::run_process() {
-    //uart_print("now_process addr:");
-	//uart_print_hex((uint64_t)now_process);
+    //uart_print("\nnow_process addr:");
+	//uart_print_hex((uint64_t)this);
     tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
     uint64_t now_rsp = (uint64_t)this->kernel_stack;
 	//uart_print("\nSwitching to process PID ");
 	//uart_print(this->process_id);
     //uart_print("\nvirt:");
 	//uart_print_hex((uint64_t)&virt_page_allocator);
+    /*
+    uart_print("\nkernel_stack: ");
+    uart_print_hex((uint64_t)this->kernel_stack);
+
+    // kernel_stack이 가리키는 곳의 내용도 출력
+    // context_t 구조체 맨 끝(iretq가 읽을 부분): RIP, CS, RFLAGS, RSP, SS
+    context_t* ctx = (context_t*)this->kernel_stack;
+    uart_print("\nRIP: ");
+    uart_print_hex(ctx->rip);
+    uart_print("\nCS: ");
+    uart_print_hex(ctx->cs);
+    uart_print("\nRFLAGS: ");
+    uart_print_hex(ctx->rflags);
+    uart_print("\nRSP: ");
+    uart_print_hex(ctx->rsp);
+    */
     virt_page_allocator = this->pallocator;
     virt_page_allocator->setCr3();
-    __asm__ __volatile(
+    __asm__ __volatile__ (
         "mov rsp, %[now_rsp]\n\t"
         "pop rax\n\t"
         "mov gs, ax\n\t"
@@ -313,6 +342,11 @@ bool Process::munmap(uint64_t va, uint64_t size) {
 	return true;
 }
 void Process::msg_recv(msg_t msg) {
+    if (state & PROCESS_STATE_MSGWAIT) {
+        state &= ~PROCESS_STATE_MSGWAIT; // 메시지 대기 상태 해제
+        state &= ~PROCESS_STATE_WAITING; // 대기 상태 해제
+        add_process(process_id); // 프로세스 스케줄링 큐에 추가
+    }
     if (msg.type == MSG_MOUSE_MOVE) {
         msg_t* last = msgq.peek_back();
         if (last && last->type == MSG_MOUSE_MOVE) {
@@ -329,6 +363,9 @@ bool Process::msg_pop(msg_t* msg) {
     }
 	*msg = msgq.dequeue();
     return true;
+}
+bool Process::msg_empty() const {
+    return msgq.isEmpty();
 }
 uint64_t process_count = 0;
 void* Process::operator new(size_t size) {
@@ -356,3 +393,12 @@ void Process::operator delete(void* ptr) {
 uint64_t get_process_count() {
     return process_count;
 }
+__attribute__((naked))
+void idle_process_func() {   // 최대한 메모리를 안먹기 위해 
+    __asm__ __volatile__(
+        "1:\n\t"
+        "hlt\n\t"
+        "jmp 1b\n\t"
+    );
+}
+Process* idle_process;

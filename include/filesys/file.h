@@ -23,13 +23,33 @@ public:
 		: partition(part), file_size(size), current_offset(0), start_cluster(start_cluster) {
 	}
 	virtual ~File() {}
-	int read(void* buf, uint32_t len);
-	int write(const void* buf, uint32_t len);
-	int seek(uint64_t offset);
-	uint64_t tell();
-	uint64_t size();
-	void close();
+	virtual int read(void* buf, uint32_t len);
+	virtual int write(const void* buf, uint32_t len);
+	virtual int seek(uint64_t offset);
+	virtual uint64_t tell();
+	virtual uint64_t size();
+	virtual void close();
 	void* operator new(size_t size);
 	void operator delete(void* ptr);
+	static File* get(uint64_t index);
+	uint64_t get_cwd_cluster() const { return start_cluster; }
+};
+class STDIn : public File {
+	public:
+	STDIn() : File(nullptr, 0, 0) {}
+	int read(void* buf, uint32_t len) override;
+	int write(const void* buf, uint32_t len) override { return -1; }
+	int seek(uint64_t offset) override { return -1; }
+	uint64_t tell() override { return 0; }
+	uint64_t size() override { return 0; }
+};
+class STDOut : public File {
+	public:
+	STDOut() : File(nullptr, 0, 0) {}
+	int read(void* buf, uint32_t len) override { return -1; }
+	int write(const void* buf, uint32_t len) override;
+	int seek(uint64_t offset) override { return -1; }
+	uint64_t tell() override { return 0; }
+	uint64_t size() override { return 0; }
 };
 #endif // __FILE_H__

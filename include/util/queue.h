@@ -51,8 +51,6 @@ class queue {
             front_index = 0;
         }
         else if (front_page == back_page && front_index == back_index) {
-            // "어? 나랑 꼬리랑 만났네? 큐 비었네?"
-            // 아까운 페이지 버리지 말고, 인덱스만 0으로 돌려서 재사용하자!
             front_index = 0;
             back_index = 0;
         }

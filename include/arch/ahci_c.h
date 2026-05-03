@@ -72,7 +72,7 @@ public:
 
     uint64_t get_type() override { return 1; }
 private:
-    HBA_MEM* abar;         // BAR5 가상 주소
+    volatile HBA_MEM* abar;         // BAR5 가상 주소
     uint64_t  bar_size;
     void init_port(volatile HBA_PORT* port);
     // 포트 타입 판별 (0=없음, 1=SATA, 2=ATAPI, 3=SEMB, 4=PM)

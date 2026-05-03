@@ -291,7 +291,7 @@ void XHCIController::init() {
     uart_print("\n");
 
     mmio_base = (volatile uint8_t*)(bar.addr + MMIO_BASE);
-    if (bar.addr > 0xFFFFFFFF) {
+    if (bar.addr > phy_page_allocator->get_total_pages() * PageSize) {
         mmio_base = (volatile uint8_t*)mmio_bump;
         mmio_bump += bar.size;
     }
@@ -543,6 +543,19 @@ void XHCIController::init() {
             }
         }
     }
+    bool ok = setup_msix(pci_bus, pci_slot, pci_func, { 0x35, 0 });
+    uart_print("[MSIX] IMAN=");     uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
+    uart_print("[MSIX] USBCMD=");   uart_print_hex(*usbcmd); uart_print("\n");
+    if (!ok) {
+        uart_print("[XHCI] MSI-X not supported!\n");
+        return;
+    }
+    // xHCI 자체 인터럽트 Enable은 컨트롤러마다 다르니까 여기서
+    *(volatile uint32_t*)(intr_base) |= 0x03; // IMAN
+    *usbcmd |= (1 << 2); // INTE
+}
+void XHCIController::eoi() {
+	*(volatile uint32_t*)(intr_base) |= 0x01; // IMAN IP 비트 클리어
 }
 EventTRB XHCIController::execute_command(TRB cmd) {
     cmd_ring->push(cmd);
@@ -585,6 +598,7 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
         ev.ptr = (uint64_t)ptr;
         ev.status = result >> 32;
         ev.control = result & 0xFFFFFFFF;
+        event_ring->erdp(intr_base);
     }
     uart_print("transfer length remaining=");
     uart_print_hex(ev.status & 0xFFFFFF);  // 못 받은 바이트 수
@@ -631,6 +645,7 @@ void xhci_handler(interrupt_frame_t* frame) {
                 }
             }
         }
+        contr->eoi();
     }
     lapic_eoi();
 }

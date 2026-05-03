@@ -299,6 +299,7 @@ public:
     void command_completion(EventTRB ev);
     volatile uint32_t* doorbell_base;
     EventRing* event_ring;
+    void eoi();
 private:
     volatile uint8_t* mmio_base;         // BAR5 가상 주소
     uint64_t  bar_size;

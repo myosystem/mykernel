@@ -6,19 +6,12 @@
 char uart_buf[1000];
 uint64_t next_process_time = 0;
 extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame) {
-    now_process->kernel_stack = (uint64_t*)frame;
+    if (!(now_process->state & PROCESS_STATE_WAITING)) {
+        now_process->kernel_stack = (uint64_t*)frame;
+    }
     if (!tsc_available) fake_tsc = fake_deadline;
 	if (next_process_time == 0 || next_process_time <= tsc_get()) {  // 첫 타이머는 무조건 프로세스 스케줄링
         add_process(now_process->process_id);
-        if (process_queue->isEmpty()) {
-			if (time_event->isEmpty() == false) {
-                tsc_deadline_set(time_event->top().time);
-            }
-            lapic_eoi();
-			__asm__ __volatile__("sti");
-            while (1)
-                __asm__ __volatile__("hlt");
-        }
         now_process = next_process();
         uint64_t nowtime = tsc_get();
 		next_process_time = nowtime + ms_to_ticks(now_process->time_slice);

@@ -51,9 +51,9 @@ static inline uint64_t ms_to_ticks(uint64_t ms) {
 // TSC-Deadline
 static inline void tsc_deadline_set(uint64_t deadline) {
     if (tsc_available) {
-        uart_print("TSC deadline set: ");
-		uart_print_hex(deadline);
-        uart_print("\n");
+        //uart_print("TSC deadline set: ");
+		//uart_print_hex(deadline);
+        //uart_print("\n");
         __asm__ volatile ("mfence" ::: "memory");
         wrmsr(0x6E0, deadline);
     }

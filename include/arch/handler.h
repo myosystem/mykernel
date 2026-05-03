@@ -18,4 +18,5 @@ __attribute__((interrupt))  void general_protection_fault_handler(interrupt_fram
 __attribute__((interrupt))  void stack_segment_fault_handler(interrupt_frame_t* frame, uint64_t error_code);
 __attribute__((naked))      void syscall_idthandler();
 __attribute__((naked))      void waiting_idthandler();
+__attribute__((interrupt))  void xhci_handler(interrupt_frame_t* frame);
 #endif // __HANDLER_H__

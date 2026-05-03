@@ -64,6 +64,7 @@ void init_interrupts() {
     set_idt_gate(32, (uint64_t)timer_handler, 0x08, 0x8E);
     set_idt_gate(33, (uint64_t)keyboard_handler, 0x08, 0x8E);
     set_idt_gate(0x2C, (uint64_t)mouse_handler, 0x08, 0x8E);
+    set_idt_gate(0x35, (uint64_t)xhci_handler, 0x08, 0x8E);
 	set_idt_gate(0x80, (uint64_t)syscall_idthandler, 0x08, 0xEE);
 	set_idt_gate(0x81, (uint64_t)waiting_idthandler, 0x08, 0xEE);
     load_idt();
@@ -71,19 +72,46 @@ void init_interrupts() {
 }
 char testbuf[PageSize * 3 + 1];
 vector<Controller*>* controllers;
-uint8_t* controller_buf[sizeof(vector<Controller*>)];
+uint8_t controller_buf[sizeof(vector<Controller*>)];
 vector<Disk*>* disks;
-uint8_t* disk_buf[sizeof(vector<Disk*>)];
+uint8_t disk_buf[sizeof(vector<Disk*>)];
+uint8_t idle_process_buf[sizeof(Process)];
 bool booting = true;
+__attribute__((naked))
+void idle_process_func();
 //일단 콘솔부터
 extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     __asm__ __volatile__ ("cli");
     uart_init();
     init_tss(0, 0);
     init_interrupts();
+
+    virt_page_allocator->free_all_low_pages();
 	for (uint64_t i = 256; i <= 267; i++) {
 		volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
         *pml4_entry_addr = 0;
+    }
+	idle_process = ::new (idle_process_buf) Process();
+	idle_process->cr3 = virt_page_allocator->getCr3() + HHDM_BASE;
+	idle_process->state = 1;
+    idle_process->code_va_base = (uint64_t)idle_process_func;
+    idle_process->kernel_stack_phys = phy_page_allocator->alloc_phy_page();
+	idle_process->kernel_stack = (uint64_t*)(idle_process->kernel_stack_phys + HHDM_BASE);
+	idle_process->user_stack_bottom = (uint64_t)idle_process->kernel_stack + PageSize;
+	idle_process->user_stack_top = (uint64_t)idle_process->kernel_stack;
+	idle_process->pallocator = virt_page_allocator; // 재사용
+    idle_process->time_slice = 10;
+	idle_process->process_id = IDLE_PROCESS_PID; // idle 프로세스는 고유한 ID가 없음
+    *(--idle_process->kernel_stack) = 0x10;
+    *(--idle_process->kernel_stack) = idle_process->user_stack_bottom;
+    *(--idle_process->kernel_stack) = 0x202; // rflags
+    *(--idle_process->kernel_stack) = 0x08;  // cs
+    *(--idle_process->kernel_stack) = (uint64_t)idle_process->code_va_base; // rip
+    for (int i = 0; i < 15; i++) {
+        *(--idle_process->kernel_stack) = 0;
+    }
+    for (int i = 0; i < 4; i++) {
+        *(--idle_process->kernel_stack) = 0x10;
     }
 	controllers = new (controller_buf) vector<Controller*>();
 	disks = new (disk_buf) vector<Disk*>();
@@ -152,7 +180,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     init_process();
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
     Process* display = new Process();
-    display->init(0x1B, 0x23);
+    display->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_cwd_cluster());
     while (display_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         display->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
@@ -162,7 +190,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	//add_process(display->process_id);
     
     Process* test = new Process();
-    test->init(0x1B, 0x23);
+    test->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_cwd_cluster());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         test->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
@@ -172,7 +200,6 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);
     uart_print("\ntest\n");
-    virt_page_allocator->free_all_low_pages();
 	lapic_tsc_deadline_set_ms(10);
     booting = false;
     display->run_process();

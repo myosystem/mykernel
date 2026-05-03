@@ -30,33 +30,68 @@ void keyboard_handler(interrupt_frame_t* frame) {
 }
 static uint8_t mouse_cycle = 0;
 static uint8_t mouse_bytes[3];
-volatile int cursor_x = 0;
-volatile int cursor_y = 0;
+int cursor_x = 0;
+int cursor_y = 0;
+uint8_t mouse_state = 0;
 __attribute__((interrupt))
 void mouse_handler(interrupt_frame_t* frame) {
-    mouse_bytes[mouse_cycle] = inb(0x60);
+    while (1) {
+        uint8_t status = inb(0x64);
+        if (!(status & 0x01)) break;
+        // 1. 출력 버퍼에 데이터가 있고 (0x01), 
+        // 2. 그 데이터가 마우스 데이터인 경우 (0x20)에만 읽어야 함
+        if (!((status & 0x01) && (status & 0x20))) {
+            continue;
+        }
+        mouse_bytes[mouse_cycle] = inb(0x60);
 
-    if (mouse_cycle == 0 && !(mouse_bytes[0] & 0x08)) {
-        // 동기화 오류, 무시
-    }
-    else if (++mouse_cycle == 3) {
-        mouse_cycle = 0;
+        if (mouse_cycle == 0 && !(mouse_bytes[0] & 0x08)) {
+            continue;
+        }
+        if (++mouse_cycle == 3) {
+            mouse_cycle = 0;
 
-        int dx = mouse_bytes[1];
-        int dy = mouse_bytes[2];
+            int dx = mouse_bytes[1];
+            int dy = mouse_bytes[2];
+            uint8_t state = mouse_bytes[0] & 0b111;
+            uint8_t pressd = state & ~mouse_state;
+            uint8_t released = mouse_state & ~state;
+            mouse_state = state;
 
-        if (mouse_bytes[0] & 0x10) dx -= 256;  // X 부호 보정
-        if (mouse_bytes[0] & 0x20) dy -= 256;  // Y 부호 보정
-
-        cursor_x -= dx;
-        cursor_y += dy;  // Y축 반전
-
-        // 경계 처리
-        if (cursor_x < 0) cursor_x = 0;
-        if (cursor_y < 0) cursor_y = 0;
-        if (cursor_x >= (int)bootinfo->framebufferWidth) cursor_x = bootinfo->framebufferWidth - 1;
-        if (cursor_y >= (int)bootinfo->framebufferHeight) cursor_y = bootinfo->framebufferHeight - 1;
-        ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_MOVE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+            if (mouse_bytes[0] & 0x10) dx -= 256;  // X 부호 보정
+            if (mouse_bytes[0] & 0x20) dy -= 256;  // Y 부호 보정
+            /*
+            uart_print("row : 0x");
+            uart_print_hex2(mouse_bytes[0]);
+            uart_print(", 0x");
+            uart_print_hex2(mouse_bytes[1]);
+            uart_print(", 0x");
+            uart_print_hex2(mouse_bytes[2]);
+            uart_print("\nval : ");
+            uart_print(dx);
+            uart_print(", ");
+            uart_print(dy);
+            uart_print("\n");
+            */
+            cursor_x -= dx;
+            cursor_y += dy;  // Y축 반전
+            if (dx != 0 || dy != 0) {
+                // 경계 처리
+                if (cursor_x < 0) cursor_x = 0;
+                if (cursor_y < 0) cursor_y = 0;
+                if (cursor_x >= (int)bootinfo->framebufferWidth) cursor_x = bootinfo->framebufferWidth - 1;
+                if (cursor_y >= (int)bootinfo->framebufferHeight) cursor_y = bootinfo->framebufferHeight - 1;
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_MOVE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+            }
+            if (pressd & 0b001)
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+            if (pressd & 0b010)
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+            if (released & 0b001)
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+            if (released & 0b010)
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+        }
     }
     lapic_eoi();
 }
@@ -279,8 +314,31 @@ void waiting_idthandler() {
 extern "C" void waiting_handler(context_t* frame) {
     now_process->kernel_stack = (uint64_t*)frame;
     switch (frame->rax) {
+    case 0x4:   //MSG waiting
+    {
+		if (!now_process->msg_empty()) {
+			frame->rax = -1; // 메시지 큐에 이미 메시지가 있는 경우 에러 반환
+            return;
+        }
+		now_process->state |= PROCESS_STATE_MSGWAIT; // 메시지 대기 상태
+        break;
+    }
+    case 32:    //Timer waiting
+    {
+		KEvent event;
+		event.interval = 0;
+		event.process_id = now_process->process_id;
+		event.time = tsc_get() + ms_to_ticks(frame->rdi); // 현재 시간 + 대기할 시간
+		event.type = EVENT_TYPE_SLEEP;
+        time_event->push(event);
+        break;
+    }
 	case 0x35:  //xHCI Event Interrupt
     {
+        if ((frame->cs & 0x03) != 0) {
+			frame->rax = -1; // 유저 모드에서 호출한 경우 에러 반환
+			return; //35는 유저가 실행 불가
+        }
 		KEvent event;
 		event.interval = 0;
 		event.process_id = now_process->process_id;
@@ -295,8 +353,8 @@ extern "C" void waiting_handler(context_t* frame) {
     default:
 		return; // 알 수 없는 인터럽트, 그냥 복귀
     }
-    now_process->state |= 0b10; // 대기 상태
-	now_process = next_process();
+    now_process->state |= PROCESS_STATE_WAITING; // 대기 상태
+    now_process = next_process();
     uint64_t nowtime = tsc_get();
     next_process_time = nowtime + ms_to_ticks(now_process->time_slice);
     uint64_t nexttime = next_process_time;

@@ -64,7 +64,7 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
 	trb.control = (1 << 10) | (1 << 5); // Type=1(Normal), IOC=1, DIR=In
     TRB* bulk_in_phy = (TRB*)bulk_in->push(trb);
     device->controller->doorbell_base[slot_id] = dci_in;
-    device->controller->wait_command(bulk_in_phy, slot_id, device->get_port_id(), 32); // Transfer Event 이벤트 대기 (Type 32)
+    device->controller->wait_command(bulk_in_phy, slot_id, device->get_port_id(), 32, dci_in); // Transfer Event 이벤트 대기 (Type 32)
 
     // CSW 서명과 상태 체크 (0 = Success)
     return (csw->signature == 0x53425355 && csw->status == 0);

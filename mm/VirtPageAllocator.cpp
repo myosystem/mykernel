@@ -2,7 +2,7 @@
 #include "util/memory.h"
 #include "debug/log.h"
 volatile uint32_t vpaspinv = 0;
-uint64_t mmio_bump = MMIO_BASE + 0x100000000ULL;
+uint64_t mmio_bump = MMIO_BASE + 0x4000000000ULL;
 inline void _lockv() {
     while (__atomic_test_and_set(&vpaspinv, __ATOMIC_ACQUIRE)) {
         __asm__ __volatile__("pause");

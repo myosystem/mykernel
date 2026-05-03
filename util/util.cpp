@@ -10,7 +10,9 @@ void simple_hlt() {
 __attribute__((naked, noinline))
 unsigned long long call_xhci(...) {
     __asm__ __volatile__(
+        "mov rax, 0x35\n\t"
         "int 0x81\n\t"
         "ret\n\t"
+		::: "rax", "rcx", "r11", "memory"
     );
 }

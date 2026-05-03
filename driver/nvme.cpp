@@ -15,6 +15,10 @@ void NVMeDisk::init() {
     // 1. BAR0 매핑 (동일)
     pci_bar_info_t bar = pci_get_bar_size(pci_bus, pci_slot, pci_func, 0x10);
     nvme_base = (volatile uint8_t*)(bar.addr + MMIO_BASE);
+    if (bar.addr > phy_page_allocator->get_total_pages() * PageSize) {
+        nvme_base = (volatile uint8_t*)mmio_bump;
+        mmio_bump += bar.size;
+    }
     uint64_t bar_size = bar.size; // PCI에서 읽어온 실제 크기 (보통 8KB 이상)
     for (uint64_t offset = 0; offset < bar_size; offset += 4096) {
         virt_page_allocator->alloc_virt_page(

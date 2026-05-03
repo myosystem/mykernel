@@ -19,18 +19,52 @@ void disable_pic() {
 }
 // PS/2 컨트롤러에서 마우스 활성화 및 인터럽트 설정
 void enable_cursor() {
-    outb(0x64, 0xA8);  // 마우스 활성화
+    // 1. 버퍼 비우기
+    while (inb(0x64) & 0x01) inb(0x60);
+
+    // 2. 마우스 포트 활성화
+    outb(0x64, 0xA8);
+
+    // 3. CCB 읽어서 수정
     outb(0x64, 0x20);
-    while ((inb(0x64) & 1) == 0);
-    uint8_t status = inb(0x60) | 0x01 | 0x02;  // 키보드(bit0) + 마우스(bit1) 둘 다 켜기
+    while (!(inb(0x64) & 0x01));
+    uint8_t ccb = inb(0x60);
+    ccb |= 0x02;   // 마우스 IRQ12 활성화
+    ccb &= ~0x20;  // 마우스 클럭 활성화
     outb(0x64, 0x60);
-    outb(0x60, status);
+    outb(0x60, ccb);
+
+    // 4. 마우스 리셋
+    outb(0x64, 0xD4);
+    outb(0x60, 0xFF);
+    while (!(inb(0x64) & 0x01));
+    inb(0x60); // 0xFA (ACK)
+    while (!(inb(0x64) & 0x01));
+    inb(0x60); // 0xAA (self-test pass)
+    while (!(inb(0x64) & 0x01));
+    inb(0x60); // 0x00 (mouse ID)
+
+    // 5. 샘플레이트 설정 (너무 높으면 VMware에서 버퍼 과부하)
+    outb(0x64, 0xD4); outb(0x60, 0xF3); // Set Sample Rate
+    while (!(inb(0x64) & 0x01)); inb(0x60); // ACK
+    outb(0x64, 0xD4); outb(0x60, 100);
+    while (!(inb(0x64) & 0x01)); inb(0x60); // ACK
+
+    // 6. 마우스 활성화
     outb(0x64, 0xD4);
     outb(0x60, 0xF4);
+    while (!(inb(0x64) & 0x01));
+    inb(0x60); // ACK
+
+    // 7. 남은 버퍼 완전히 비우기
+    while (inb(0x64) & 0x01) inb(0x60);
 }
 // PS/2 컨트롤러에서 키보드 활성화
 void enable_keyboard() {
     outb(0x64, 0xAE);  // 키보드 활성화
+    while (inb(0x64) & 0x01) {
+        inb(0x60); // 남아있는 ACK나 쓰레기 데이터를 싹 비움
+    }
 }
 // Local APIC 활성화
 void enable_apic() {
@@ -145,5 +179,11 @@ void tsc_init(void) {
 
 // 취소
 void lapic_tsc_deadline_cancel(void) {
-    wrmsr(MSR_IA32_TSC_DEADLINE, 0);
+    if (tsc_available) {
+        //__asm__ volatile ("mfence" ::: "memory");
+        wrmsr(MSR_IA32_TSC_DEADLINE, 0);
+    }
+    else {
+        lapic_write(0x380, 0);
+    }
 }

@@ -22,12 +22,12 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	switch (frame->rax) {
 	case 1: // write
 	{
-		if (frame->rdi == 1) { // write to uart
+		void*& slot = now_process->open_files[frame->rdi];
+		File* file = (File*)slot;
+		if (file != nullptr) { // write to uart
 			const char* buf = (const char*)frame->rsi;
 			uint64_t len = frame->rdx;
-			for (uint64_t i = 0; i < len; i++) {
-				uart_putc(buf[i]);
-			}
+			file->write(buf, len);
 			frame->rax = len; // 반환값: 쓴 바이트 수
 		}
 		else {
@@ -37,8 +37,32 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	}
 	case 2: // read
 	{
-		// 아직 구현 안됨
-		frame->rax = -1; // 반환값: 오류
+		void*& slot = now_process->open_files[frame->rdi];
+		File* file = (File*)slot;
+		if (file != nullptr) { // write to uart
+			char* buf = (char*)frame->rsi;
+			uint64_t len = frame->rdx;
+			file->read(buf, len);
+			frame->rax = len; // 반환값: 읽은 바이트 수
+		}
+		else {
+			frame->rax = -1; // 반환값: 오류
+		}
+		break;
+	}
+	case 8: // open
+	{
+		const char* path = (const char*)frame->rdi;
+		File* file = vfs_open(path, now_process->current_partition, now_process->cwd_cluster);
+		if (file != nullptr) {
+			uart_print("Opened file: "); uart_print(path); uart_print("\n");
+			uint64_t fd = now_process->open_files.push_back(file);
+			frame->rax = fd; // 반환값: 파일 디스크립터 (인덱스)
+		}
+		else {
+			uart_print("Failed to open "); uart_print(path); uart_print("\n");
+			frame->rax = -1; // 반환값: 오류
+		}
 		break;
 	}
 	case 3: // getpid
@@ -49,10 +73,12 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	case 4: // message
 	{
 		if (frame->rdi == 0) { // send
-			const msg_t* msg = (const msg_t*)frame->rsi;
+			msg_t* msg = (msg_t*)frame->rsi;
+			msg->sender_pid = now_process->process_id; // 보낸이 PID 자동 설정
+			msg->timestamp = 0; // 나중에 tsc꺼 넣을거임
 			uint64_t pid = frame->rdx;
 			Process* target_process = (Process*)(PROCESS_QUEUE_BASE + (sizeof(Process) * pid));
-			if(target_process->state != 1) {
+			if((target_process->state & 1) != 1) {
 				frame->rax = -1; // 반환값: 오류 (존재하지 않는 프로세스)
 				break;
 			}
@@ -122,9 +148,9 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		uint64_t size = frame->rdi;
 		uint64_t addr = now_process->mmap(size, MMAP_READ | MMAP_WRITE, 0);
 		frame->rax = addr; // 반환값: 매핑된 가상 주소
-		uart_print("mmap size: ");
-		uart_print(size);
-		uart_print(", addr: ");
+		uart_print("mmap size: 0x");
+		uart_print_hex(size);
+		uart_print(", addr: 0x");
 		uart_print_hex(addr);
 		uart_print("\n");
 		break;
@@ -137,8 +163,8 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 			frame->rax = 0; // 반환값: 성공
 			uart_print("munmap addr: ");
 			uart_print_hex(addr);
-			uart_print(", size: ");
-			uart_print(size);
+			uart_print(", size: 0x");
+			uart_print_hex(size);
 			uart_print("\n");
 		}
 		else {

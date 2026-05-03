@@ -136,3 +136,19 @@ void File::operator delete(void* ptr) {
     File* p = (File*)ptr;
     p->state = 0;
 }
+File* File::get(uint64_t index) {
+	File* f = (File*)(FILE_QUEUE_BASE + index * sizeof(File));
+	if (f->state == 1) return f;
+    return nullptr;
+}
+int STDIn::read(void* buf, uint32_t len) {
+    // 아직 구현 안됨 (키보드 버퍼에서 읽어오는 로직 필요)
+    return -1;
+}
+int STDOut::write(const void* buf, uint32_t len) {
+    const char* cbuf = (const char*)buf;
+    for (uint32_t i = 0; i < len; i++) {
+        uart_putc(cbuf[i]);
+    }
+    return len;
+}

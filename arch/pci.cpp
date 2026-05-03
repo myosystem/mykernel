@@ -170,3 +170,55 @@ void* pci_init() {
     );
     return (void*)(abar.addr + MMIO_BASE);
 }
+bool setup_msix(uint16_t bus, uint16_t slot, uint16_t func, MSIXConfig cfg) {
+    // 1. MSI-X Capability 찾기
+    uint8_t cap_ptr = pci_read8(bus, slot, func, 0x34);
+    while (cap_ptr) {
+        uint8_t cap_id = pci_read8(bus, slot, func, cap_ptr);
+        if (cap_id == 0x11) break;
+        cap_ptr = pci_read8(bus, slot, func, cap_ptr + 1);
+    }
+    if (!cap_ptr) return false;
+
+    // 2. 테이블 위치 파악
+    uint32_t table_info = pci_read32(bus, slot, func, cap_ptr + 0x04);
+    uint8_t  bir = table_info & 0x7;
+    uint32_t tbl_offset = table_info & ~0x7u;
+
+    // 3. 테이블 주소 계산
+    pci_bar_info_t tbl_bar = pci_get_bar_size(bus, slot, func, 0x10 + bir * 4);
+    volatile uint32_t* msix_table = (volatile uint32_t*)(tbl_bar.addr + MMIO_BASE);
+    if (tbl_bar.addr > phy_page_allocator->get_total_pages() * PageSize) {
+        msix_table = (volatile uint32_t*)mmio_bump;
+        mmio_bump += tbl_bar.size;
+    }
+    for (uint64_t off = 0; off < tbl_bar.size; off += 4096) {
+        uint64_t result = virt_page_allocator->alloc_virt_page((uint64_t)msix_table + off,
+            tbl_bar.addr + off,
+            VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
+    }
+	msix_table = (volatile uint32_t*)((uint64_t)msix_table + tbl_offset);
+    // 4. Function Mask 켜기
+    uint16_t msgctl = pci_read16(bus, slot, func, cap_ptr + 0x02);
+    msgctl |= (1 << 15) | (1 << 14); // Enable + Function Mask
+    pci_write16(bus, slot, func, cap_ptr + 0x02, msgctl);
+
+    // 5. Entry 0 세팅
+    uart_print("[MSIX] before write table[0]="); uart_print_hex(msix_table[0]); uart_print("\n");
+    msix_table[0] = 0xFEE00000 | (cfg.lapic_id << 12);
+    msix_table[1] = 0x00000000;
+    msix_table[2] = cfg.vector;
+    msix_table[3] = 0x00000000; // Unmask
+
+    // 6. Function Mask 해제
+    msgctl &= ~(1 << 14);
+    pci_write16(bus, slot, func, cap_ptr + 0x02, msgctl);
+    uart_print("[MSIX] table_info="); uart_print_hex(table_info); uart_print("\n");
+    uart_print("[MSIX] bir="); uart_print_hex(bir); uart_print("\n");
+    uart_print("[MSIX] tbl_offset="); uart_print_hex(tbl_offset); uart_print("\n");
+    uart_print("[MSIX] msix_table addr="); uart_print_hex((uint64_t)msix_table); uart_print("\n");
+    uart_print("[MSIX] table[0]="); uart_print_hex(msix_table[0]); uart_print("\n");
+    uart_print("[MSIX] table[2]="); uart_print_hex(msix_table[2]); uart_print("\n");
+    uart_print("[MSIX] msgctl=");   uart_print_hex(pci_read16(bus, slot, func, cap_ptr + 0x02)); uart_print("\n");
+    return true;
+}

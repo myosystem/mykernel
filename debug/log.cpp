@@ -39,7 +39,7 @@ void uart_putc(char c) {
     }
     putc(bootinfo, (cursor_pos % 200) * 1 * 8 + 4, (cursor_pos / 200) * 2 * 10 + 4, c, 0, 1);
     cursor_pos++;
-	if (cursor_pos >= 200 * 25) {
+	if (cursor_pos >= 200 * 1/*25*/) {
         cursor_pos = 0; // 화면이 가득 차면 다시 처음으로
     }
 }

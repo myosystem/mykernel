@@ -73,8 +73,11 @@ void AHCIController::init() {
     // BAR5 매핑 (AHCI는 BAR5 = 0x24)
     pci_bar_info_t bar = pci_get_bar_size(pci_bus, pci_slot, pci_func, 0x24);
     bar_size = bar.size;
-    abar = (HBA_MEM*)(bar.addr + MMIO_BASE);
-
+    abar = (volatile HBA_MEM*)(bar.addr + MMIO_BASE);
+    if (bar.addr > phy_page_allocator->get_total_pages() * PageSize) {
+        abar = (volatile HBA_MEM*)mmio_bump;
+        mmio_bump += bar.size;
+    }
     for (uint64_t off = 0; off < bar_size; off += 4096)
         virt_page_allocator->alloc_virt_page(
             (uint64_t)abar + off, bar.addr + off,

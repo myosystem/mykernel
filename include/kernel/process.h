@@ -6,11 +6,15 @@
 #include "util/queue.h"
 #include "util/heaptree.h"
 #include "util/vector.h"
+#include "filesys/file.h"
 
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
 #define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
 #define PROCESS_QUEUE_BASE 0xFFFF818000000000ULL
 
+#define PROCESS_STATE_READY     0b1
+#define PROCESS_STATE_WAITING   0b10
+#define PROCESS_STATE_MSGWAIT   0b100
 struct TSS64 {
     uint32_t reserved0;
     uint64_t rsp0;
@@ -100,9 +104,13 @@ enum {
     MSG_GUI_BASE = 0x3000,
     MSG_MAKE_WINDOW = MSG_GUI_BASE + 1,
     MSG_DESTROY_WINDOW = MSG_GUI_BASE + 2,
+    MSG_DRAW_FRAME = MSG_GUI_BASE + 3,
     MSG_MOUSE_MOVE = MSG_GUI_BASE + 0x100,
-    MSG_MOUSE_CLICK = MSG_GUI_BASE + 0x101,
-    MSG_MOUSE_SCROLL = MSG_GUI_BASE + 0x102,
+    MSG_MOUSE_LCLICK = MSG_GUI_BASE + 0x101,
+    MSG_MOUSE_RCLICK = MSG_GUI_BASE + 0x102,
+    MSG_MOUSE_SCROLL = MSG_GUI_BASE + 0x103,
+	MSG_MOUSE_LRELEASE = MSG_MOUSE_LCLICK + 0x10,
+	MSG_MOUSE_RRELEASE = MSG_MOUSE_RCLICK + 0x10,
 };
 typedef struct {
     uint64_t sender_pid;    // 8 bytes (Explicitly aligned)
@@ -146,10 +154,12 @@ public:
     mmap_entry* mmap_table;
     uint64_t process_id;
     Partition* current_partition;
+	uint64_t cwd_cluster;
     uint64_t time_slice;
+    pointer_vector open_files;
     Process() {};
     ~Process() {};
-    void init(uint64_t cs, uint64_t ss);
+    void init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster);
     void addCode(void* code_addr);
     void setHeap();
     mmap_entry* isAddrInMMap(uint64_t va) const;
@@ -157,6 +167,7 @@ public:
 	bool munmap(uint64_t va, uint64_t size);
     void msg_recv(msg_t msg);
     bool msg_pop(msg_t* msg);
+	bool msg_empty() const;
     void run_process();
     void* operator new(size_t size);
     void operator delete(void* ptr);
@@ -165,6 +176,8 @@ extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 
 extern HeapTree<KEvent>* time_event;
 extern vector<KEvent>* xhci_event;
 extern Process* now_process;
+#define IDLE_PROCESS_PID ((unsigned long)-1)
+extern Process* idle_process;
 void init_process();
 Process* GetProcess(size_t index);
 void add_process(size_t process_id);

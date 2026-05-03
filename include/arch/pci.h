@@ -22,4 +22,9 @@ typedef struct {
 } pci_bar_info_t;
 //extern vector<pci_device_t> pci_devices;
 pci_bar_info_t pci_get_bar_size(uint8_t bus, uint8_t slot, uint8_t func, uint8_t bar_index);
+struct MSIXConfig {
+    uint8_t  vector;      // IDT 벡터 번호
+    uint8_t  lapic_id;    // 어느 CPU (BSP=0)
+};
+bool setup_msix(uint16_t bus, uint16_t slot, uint16_t func, MSIXConfig cfg);
 #endif /* __PCI_H__ */
