@@ -37,7 +37,7 @@ int XHCIDisk::write_sector(uint64_t lba, uint32_t count, const void* buf) {
     cmd[5] = (lba) & 0xFF;
     cmd[7] = (count >> 8) & 0xFF;
     cmd[8] = (count) & 0xFF;
-
+    a
     return protocol->execute_transaction(
         cmd, 10,
         const_cast<void*>(buf), count * 512,
