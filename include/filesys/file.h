@@ -15,12 +15,13 @@ private:
 	Partition* partition;
 	uint64_t file_size;
 	uint64_t current_offset;
-	uint64_t start_cluster;
+	uint64_t file_id;
+	uint64_t meta_id;
 	uint8_t state;
-
+	uint64_t refcount;
 public:
-	File(Partition* part, uint64_t start_cluster, uint64_t size)
-		: partition(part), file_size(size), current_offset(0), start_cluster(start_cluster) {
+	File(Partition* part, uint64_t file_id, uint64_t meta_id, uint64_t size)
+		: partition(part), file_size(size), current_offset(0), file_id(file_id), meta_id(meta_id), refcount(1) {
 	}
 	virtual ~File() {}
 	virtual int read(void* buf, uint32_t len);
@@ -29,14 +30,15 @@ public:
 	virtual uint64_t tell();
 	virtual uint64_t size();
 	virtual void close();
+	virtual void open();
 	void* operator new(size_t size);
 	void operator delete(void* ptr);
 	static File* get(uint64_t index);
-	uint64_t get_cwd_cluster() const { return start_cluster; }
+	uint64_t get_file_id() const { return file_id; }
 };
 class STDIn : public File {
 	public:
-	STDIn() : File(nullptr, 0, 0) {}
+	STDIn() : File(nullptr,0, 0, 0) {}
 	int read(void* buf, uint32_t len) override;
 	int write(const void* buf, uint32_t len) override { return -1; }
 	int seek(uint64_t offset) override { return -1; }
@@ -45,7 +47,7 @@ class STDIn : public File {
 };
 class STDOut : public File {
 	public:
-	STDOut() : File(nullptr, 0, 0) {}
+	STDOut() : File(nullptr,0, 0, 0) {}
 	int read(void* buf, uint32_t len) override { return -1; }
 	int write(const void* buf, uint32_t len) override;
 	int seek(uint64_t offset) override { return -1; }

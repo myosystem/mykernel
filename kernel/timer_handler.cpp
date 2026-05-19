@@ -5,7 +5,9 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 char uart_buf[1000];
 uint64_t next_process_time = 0;
+void test_xhci();
 extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame) {
+    //test_xhci();
     if (!(now_process->state & PROCESS_STATE_WAITING)) {
         now_process->kernel_stack = (uint64_t*)frame;
     }
@@ -32,13 +34,28 @@ extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame)
     else if (time_event->isEmpty() == false && time_event->top().time <= tsc_get()) {
         KEvent event = time_event->top();
         time_event->pop();
-        //Process* target_process = ((Process*)PROCESS_QUEUE_BASE) + event.process_id; //언젠간 씀
         if (event.type == EVENT_TYPE_SLEEP) {
             add_process(event.process_id);
         }
+        else if (event.type == EVENT_TYPE_TIMER) {
+            Process* target_process = GetProcess(event.process_id);
+            if (target_process->state & 0b1) {
+                msg_t msg = {
+                    event.process_id,
+                    MSG_TIMER_EXPIRED,
+                    0,
+                     { event.time, event.interval, event.type },
+                    event.time
+				};
+                target_process->msg_recv(msg, false);
+            }
+        }
         if (event.interval > 0) {
-            event.time += event.interval;
-            time_event->push(event);
+            Process* target_process = GetProcess(event.process_id);
+            if (target_process->state & 0b1) {
+                event.time += event.interval;
+                time_event->push(event);
+            }
         }
         uint64_t nexttime = next_process_time;
         if (time_event->isEmpty() == false) {

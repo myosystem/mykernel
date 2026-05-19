@@ -53,7 +53,7 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
 
             bulk_out_phy = (TRB*)bulk_out->push(data_trb);
             device->controller->doorbell_base[slot_id] = dci_out;
-            device->controller->wait_command(bulk_out_phy, slot_id, device->get_port_id(), 32, dci_in);
+            device->controller->wait_command(bulk_out_phy, slot_id, device->get_port_id(), 32, dci_out);
         }
     }
 

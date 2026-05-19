@@ -4,6 +4,8 @@
 #include "util/memory.h"
 #include "kernel/kernel.h"
 #include "mm/shm.h"
+#include "arch/lapic.h"
+#include "arch/handler.h"
 #define GOP_PIXEL_FORMAT_RGBR     0   // PixelRedGreenBlueReserved8BitPerColor
 #define GOP_PIXEL_FORMAT_BGRR     1   // PixelBlueGreenRedReserved8BitPerColor
 #define GOP_PIXEL_FORMAT_BITMASK  2   // PixelBitMask
@@ -77,12 +79,13 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 			msg->sender_pid = now_process->process_id; // 보낸이 PID 자동 설정
 			msg->timestamp = 0; // 나중에 tsc꺼 넣을거임
 			uint64_t pid = frame->rdx;
+			bool is_block = frame->rcx; // 메시지 대기 여부
 			Process* target_process = (Process*)(PROCESS_QUEUE_BASE + (sizeof(Process) * pid));
 			if((target_process->state & 1) != 1) {
 				frame->rax = -1; // 반환값: 오류 (존재하지 않는 프로세스)
 				break;
 			}
-			target_process->msg_recv(*msg);
+			target_process->msg_recv(*msg, is_block);
 			frame->rax = 0; // 반환값: 성공
 		}
 		else if(frame->rdi == 1) { // pop
@@ -93,6 +96,21 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 			else {
 				frame->rax = -1; // 반환값: 오류
 			}
+		}
+		else if(frame->rdi == 2) { // empty
+			frame->rax = now_process->msg_empty() ? 1 : 0; // 반환값: 메시지 큐가 비어있으면 1, 아니면 0
+		}
+		else if (frame->rdi == 0xFFFFFFFFFFFFFFFF) { // broadcast
+			msg_t* msg = (msg_t*)frame->rsi;
+			msg->sender_pid = now_process->process_id; // 보낸이 PID 자동 설정
+			msg->timestamp = 0; // 나중에 tsc꺼 넣을거임
+			for(size_t i = 0; i < get_max_process_id(); i++) {
+				Process* target_process = (Process*)(PROCESS_QUEUE_BASE + (sizeof(Process) * i));
+				if((target_process->state & 1) == 1 && target_process->process_id != now_process->process_id) {
+					target_process->msg_recv(*msg, false);
+				}
+			}
+			frame->rax = 0; // 반환값: 성공
 		}
 		else {
 			frame->rax = -1; // 반환값: 오류
@@ -140,6 +158,39 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		else {
 			frame->rax = -1; // 반환값: 오류
+		}
+		break;
+	}
+	case 6: // event
+	{
+		switch (frame->rdi) {
+		case 0x0:
+		{
+			uint64_t event_id = frame->rsi;
+			if (time_event->remove_by([event_id](const KEvent& e) { return e.event_id == event_id; })) {
+				frame->rax = 0; // 반환값: 성공
+			}
+			else {
+				frame->rax = -1; // 반환값: 오류 (존재하지 않는 이벤트)
+			}
+			break;
+		}
+		case 0x35: {
+			static uint64_t timer_id_counter = 1;
+			KEvent event;
+			event.interval = ms_to_ticks(frame->rdx);
+			event.process_id = now_process->process_id;
+			event.time = tsc_get() + ms_to_ticks(frame->rsi); // 현재 시간 + 대기할 시간
+			event.type = EVENT_TYPE_TIMER;
+			event.event_id = timer_id_counter++;
+			time_event->push(event);
+			frame->rax = event.event_id;
+			break;
+		}
+		default: {
+			frame->rax = -1; // 반환값: 오류 (알 수 없는 이벤트 타입)
+			break;
+		}
 		}
 		break;
 	}
@@ -210,6 +261,11 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		uart_print("\n");
 		break;
 	}
+	case 30: // fork
+	{
+		frame->rax = now_process->fork();
+		break;
+	}
 	case 45: // brk
 	{
 		uint64_t new_heap_bottom = frame->rdi;
@@ -227,6 +283,19 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		uart_print("brk new_heap_bottom: ");
 		uart_print_hex(new_heap_bottom);
 		uart_print("\n");
+		break;
+	}
+	case 50: // exit
+	{
+		Process* exiting = now_process;
+		now_process = next_process();
+		exiting->~Process();
+		uint64_t zombie = exiting->kernel_stack_phys - PageSize;
+		if (exiting->parent == (uint64_t)-1) {
+			// 부모가 없는 경우, 즉시 메모리 해제
+			Process::operator delete(exiting);
+		}
+		now_process->run_process(zombie);
 		break;
 	}
 	default:

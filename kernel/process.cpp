@@ -86,6 +86,19 @@ void init_tss(uint64_t kernel_stack_phys, uint64_t ist1_phys) {
     uint16_t tss_sel = 0x28;
     asm volatile("ltr %0" : : "m"(tss_sel));
 }
+void* mmap_entry::operator new(size_t size) noexcept {
+    mmap_entry* new_entry = (mmap_entry*)MMAP_ENTRY_BASE;
+    while (new_entry->flags & MMAP_USED) {
+        new_entry++;
+    }
+    new_entry->flags = MMAP_USED;
+	return new_entry;
+}
+void mmap_entry::operator delete(void* ptr) {
+    if (ptr == nullptr) return;
+    mmap_entry* entry = (mmap_entry*)ptr;
+    entry->flags = 0; // 사용 중이 아님으로 표시
+}
 queue<size_t>* process_queue;
 uint8_t* process_queue_buf[sizeof(queue<size_t>)];
 
@@ -96,9 +109,9 @@ vector<KEvent>* xhci_event;
 uint8_t* xhci_event_buf[sizeof(vector<KEvent>)];
 
 Process* now_process = 0;
-void Process::init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster) {
+void Process::init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init) {
     code_va_base = 0x400000;
-    time_slice = 50;
+    time_slice = 100;
     pallocator = new (allocator_buffer) VirtPageAllocator();
     cr3 = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
     uint64_t lcr3 = virt_page_allocator->getCr3() + HHDM_BASE;
@@ -124,12 +137,15 @@ void Process::init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_
         *(--kernel_stack) = ss;
     }
     state = 1;
-    File* stdin = new STDIn();
-	File* stdout = new STDOut();
-	File* stderr = new STDOut();
-	open_files.push_back(stdin);
-	open_files.push_back(stdout);
-	open_files.push_back(stderr);
+    parent = 0;
+    if (full_init) {
+        File* stdin = new STDIn();
+        File* stdout = new STDOut();
+        File* stderr = new STDOut();
+        open_files.push_back(stdin);
+        open_files.push_back(stdout);
+        open_files.push_back(stderr);
+    }
 }
 void Process::addCode(void* code_addr) {
     uint64_t code = phy_page_allocator->alloc_phy_page();
@@ -155,16 +171,24 @@ void add_process(size_t index) {
 Process* GetProcess(size_t index) {
     Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
     if ((result->state & 0b1) == 0) {
-        uart_print("error!!");
+		return idle_process; // 할당되지 않은 프로세스는 idle 반환
     }
     return result;
 }
 Process* next_process() {
 	if (process_queue->isEmpty()) return idle_process;
-    int index = process_queue->dequeue();
+    uint64_t index = process_queue->dequeue();
+    if (index > get_max_process_id()) {
+		return next_process(); // 범위 초과된 PID는 건너뛰기
+    }
     Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
     if ((result->state & 0b1) == 0) {
-        uart_print("error!!");
+		return next_process(); // 할당되지 않은 프로세스는 건너뛰기
+    }
+    if (result->process_id == 2) {
+		uart_print("\nNext process PID 2 selected\n");
+		uart_print("RIP : "); uart_print_hex(((context_t*)result->kernel_stack)->rip);
+        uart_print("\n");
     }
     return result;
 }
@@ -227,6 +251,48 @@ void Process::run_process() {
     );
     __builtin_unreachable();
 }
+__attribute__((noreturn))
+void Process::run_process(uint64_t zombie_page) {
+    tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
+    uint64_t now_rsp = (uint64_t)this->kernel_stack;
+    virt_page_allocator = this->pallocator;
+    virt_page_allocator->setCr3();
+    __asm__ __volatile__(
+        "mov rsp, %[now_rsp]\n\t"
+        :
+    : [now_rsp] "a"(now_rsp)
+        );
+	phy_page_allocator->put_page(zombie_page);
+    __asm__ __volatile__(
+        "pop rax\n\t"
+        "mov gs, ax\n\t"
+        "pop rax\n\t"
+        "mov fs, ax\n\t"
+        "pop rax\n\t"
+        "mov es, ax\n\t"
+        "pop rax\n\t"
+        "mov ds, ax\n\t"
+        "pop r15\n\t"
+        "pop r14\n\t"
+        "pop r13\n\t"
+        "pop r12\n\t"
+        "pop r11\n\t"
+        "pop r10\n\t"
+        "pop r9\n\t"
+        "pop r8\n\t"
+        "pop rbp\n\t"
+        "pop rdi\n\t"
+        "pop rsi\n\t"
+        "pop rdx\n\t"
+        "pop rcx\n\t"
+        "pop rbx\n\t"
+        "pop rax\n\t"
+        "iretq\n\t"
+        :
+    :
+        );
+    __builtin_unreachable();
+}
 mmap_entry* Process::isAddrInMMap(uint64_t va) const {
     mmap_entry* entry = mmap_table;
     while (entry) {
@@ -272,23 +338,21 @@ uint64_t Process::mmap(uint64_t size, uint64_t flags, uint64_t arg) {
                 _unlockmmap();
                 return ~0ULL; // 할당 불가
 			}
-    mmap_entry* new_entry = (mmap_entry*)MMAP_ENTRY_BASE;
-    while (new_entry->flags & MMAP_USED) {
-        new_entry++;
-    }
-    new_entry->flags = flags | MMAP_USED;
+    mmap_entry* new_entry = new mmap_entry();
     if (last) {
         last->next = new_entry;
 		new_entry->next = entry;
         new_entry->va_end = last->va_start - 1;
 		new_entry->va_start = last->va_start - page_count * PageSize;
         new_entry->arg = arg;
+		new_entry->flags |= flags;
     } else {
         mmap_table = new_entry;
         mmap_table->next = entry;
 		mmap_table->va_end = user_stack_top - 1;
 		mmap_table->va_start = user_stack_top - page_count * PageSize;
 		mmap_table->arg = arg;
+		mmap_table->flags |= flags;
     }
 	_unlockmmap();
 	return new_entry->va_start;
@@ -317,7 +381,7 @@ bool Process::munmap(uint64_t va, uint64_t size) {
         } else {
             mmap_table = entry->next;
         }
-        entry->flags = 0; // 엔트리 재사용을 위해 플래그 초기화
+		delete entry;
     } else if (entry->va_start == va) {
         // 시작 부분이 일치하는 경우, 시작 주소를 조정
         entry->va_start += page_count * PageSize;
@@ -341,7 +405,7 @@ bool Process::munmap(uint64_t va, uint64_t size) {
     _unlockmmap();
 	return true;
 }
-void Process::msg_recv(msg_t msg) {
+void Process::msg_recv(msg_t msg,bool blocking) {
     if (state & PROCESS_STATE_MSGWAIT) {
         state &= ~PROCESS_STATE_MSGWAIT; // 메시지 대기 상태 해제
         state &= ~PROCESS_STATE_WAITING; // 대기 상태 해제
@@ -353,6 +417,15 @@ void Process::msg_recv(msg_t msg) {
             last->payload.params.arg[0] = msg.payload.params.arg[0];
             last->payload.params.arg[1] = msg.payload.params.arg[1];
             return;  // enqueue 없이 그냥 업데이트만
+        }
+    }
+    if (msgq.get_size() > ((msg.sender_pid == ((uint64_t)-1)) ? MAX_MESSAGE_QUEUE_INT : MAX_MESSAGE_QUEUE_SIZE)) {
+        if (blocking) {
+			waiting_msgq.enqueue(msg.sender_pid); // 메시지 보낸 프로세스 PID 대기 큐에 추가
+            call_msg_block();
+        }
+        else {
+			return; // 큐가 가득 찼으면 메시지 버리기
         }
     }
     msgq.enqueue(msg);
@@ -367,7 +440,92 @@ bool Process::msg_pop(msg_t* msg) {
 bool Process::msg_empty() const {
     return msgq.isEmpty();
 }
+Process::~Process() {
+    // 열린 파일 닫기
+    for (size_t i = 0; i < open_files.get_size(); i++) {
+        File* f = (File*)open_files[i];
+        f->close();
+    }
+    // 페이지 테이블 해제
+    pallocator->free_all_low_pages();
+    // mmap 엔트리 해제
+    mmap_entry* entry = mmap_table;
+    while (entry) {
+        mmap_entry* next = entry->next;
+        delete entry;
+        entry = next;
+    }
+	for (uint64_t i = 0; i < children.size(); i++) {
+        Process* child = GetProcess(children[i]);
+        if (child->parent == process_id) {
+			child->parent = (uint64_t)-1; // 부모를 idle로 설정
+			if (child->state & PROCESS_STATE_ZOMBIE) {
+				operator delete (child); // 좀비 상태인 자식은 즉시 해제
+            }
+        }
+    }
+	state |= PROCESS_STATE_ZOMBIE; // 좀비 상태로 표시
+    // CR3 페이지 해제
+    phy_page_allocator->put_page(cr3 - HHDM_BASE);
+}
+uint64_t Process::fork() {
+    Process* child = new Process();
+    child->init(0x1B, 0x23, this->current_partition, this->cwd_cluster, false);
+    memcpy(child->kernel_stack, this->kernel_stack, sizeof(context_t));
+    ((context_t*)child->kernel_stack)->rax = 0; // 자식 프로세스에서는 fork의 반환값이 0
+	((context_t*)child->kernel_stack)->rip = ((context_t*)this->kernel_stack)->rip; // 실행 위치는 부모와 동일
+    if (!child->pallocator->copy(*pallocator, 0x400000, code_va_base - 0x400000)) { // 코드 복사
+        delete child;
+		return ~0ULL; // 복사 실패 시 -1 반환
+    }
+    child->code_va_base = this->code_va_base;
+    child->heap_bottom = this->heap_bottom;
+    child->heap_top = this->heap_top;
+	if (!child->pallocator->copy(*pallocator, heap_top, heap_bottom - heap_top)) { // 힙 복사
+        delete child;
+		return ~0ULL; // 복사 실패 시 -1 반환
+    }
+    child->user_stack_bottom = this->user_stack_bottom;
+	child->user_stack_top = this->user_stack_top;
+	if (!child->pallocator->copy(*pallocator, user_stack_top, user_stack_bottom - user_stack_top)) { // 사용자 스택 복사
+        delete child;
+		return ~0ULL; // 복사 실패 시 -1 반환
+    }
+	mmap_entry* entry = this->mmap_table;
+	mmap_entry* last_child_entry = nullptr;
+	while (entry != nullptr) {
+        mmap_entry* new_entry = new mmap_entry();
+        new_entry->flags = entry->flags;
+        new_entry->va_start = entry->va_start;
+        new_entry->va_end = entry->va_end;
+        new_entry->arg = entry->arg;
+		new_entry->next = nullptr;
+		if (!(new_entry->flags & MMAP_SHARED)) {
+            if (!child->pallocator->copy(*pallocator, entry->va_start, entry->va_end - entry->va_start + 1)) { // mmap된 영역 복사
+                delete child;
+                return ~0ULL; // 복사 실패 시 -1 반환
+            }
+        }
+        if (last_child_entry) {
+            last_child_entry->next = new_entry;
+        } else {
+            child->mmap_table = new_entry;
+        }
+        last_child_entry = new_entry;
+        entry = entry->next;
+    }
+	for (size_t i = 0; i < open_files.get_size(); i++) {
+        File* f = (File*)open_files[i];
+        f->open();
+		child->open_files.push_back(f); // 열린 파일 포인터 공유 (참조 카운트 증가)
+    }
+	child->parent = this->process_id;
+    this->children.push_back(child->process_id);
+	process_queue->enqueue(child->process_id);
+	return child->process_id;
+}
 uint64_t process_count = 0;
+uint64_t max_process_id = 0;
 void* Process::operator new(size_t size) {
 	Process* result = (Process*)PROCESS_QUEUE_BASE;
 	uint64_t index = 0;
@@ -377,6 +535,9 @@ void* Process::operator new(size_t size) {
     }
 	result->state = 1;
 	result->process_id = index;
+	if (index > max_process_id) {
+        max_process_id = index;
+    }
 	process_count++;
 	uart_print("Process created with PID ");
 	uart_print(index);
@@ -388,10 +549,22 @@ void* Process::operator new(size_t size) {
 void Process::operator delete(void* ptr) {
     Process* p = (Process*)ptr;
     p->state = 0;
+	if (p->process_id == max_process_id) {
+        while (max_process_id > 0) {
+            Process* temp = (Process*)(PROCESS_QUEUE_BASE) + max_process_id;
+            if (temp->state & 0b1) {
+                break;
+            }
+            max_process_id--;
+        }
+    }
 	process_count--;
 }
 uint64_t get_process_count() {
     return process_count;
+}
+uint64_t get_max_process_id() {
+    return max_process_id;
 }
 __attribute__((naked))
 void idle_process_func() {   // 최대한 메모리를 안먹기 위해 

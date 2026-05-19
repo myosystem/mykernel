@@ -29,6 +29,8 @@ static inline bool is_all_zero(const void* ptr, unsigned long long size) {
 }
 extern "C" __attribute__((naked, noinline)) void simple_hlt();
 extern "C" __attribute__((naked, noinline)) unsigned long long call_xhci(...);
+extern "C" __attribute__((naked, noinline)) unsigned long long yield();
+extern "C" __attribute__((naked, noinline)) unsigned long long call_msg_block();
 #ifdef _MSC_VER
 inline void* operator new(unsigned long long, void* p) noexcept { return p; }
 inline void* operator new[](unsigned long long, void* p) noexcept { return p; }

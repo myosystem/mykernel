@@ -97,7 +97,7 @@ uint32_t FAT32::get_next_cluster_from_fat(uint32_t current_cluster) {
     // 0x0FFFFFF8 이상이면 체인의 끝을 의미함
     return next_cluster;
 }
-bool FAT32::find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry) {
+bool FAT32::find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry, uint64_t* out_offset) {
     uint32_t current_clus = dir_cluster;
 
     // 디렉토리도 여러 클러스터에 걸쳐 있을 수 있음 (체인 추적)
@@ -129,6 +129,9 @@ bool FAT32::find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* o
             // 실제로는 "TEXT    TXT" 형태를 "text.txt"와 비교하는 함수 필요
             if (compare_fat_name(entry.Name, name)) {
                 *out_entry = entry;
+                if (out_offset) {
+                    *out_offset = cluster_offset + (i * sizeof(FAT32_DirEntry));
+				}
                 return true; // 찾았다!
             }
         }
@@ -158,7 +161,8 @@ File* FAT32::open_file(const char* path, uint64_t base_dir_id) {
 
         // 3. 현재 디렉토리에서 검색
         FAT32_DirEntry entry;
-        bool found = find_entry(current_cluster, name_buf, &entry);
+		uint64_t entry_offset;
+        bool found = find_entry(current_cluster, name_buf, &entry, &entry_offset);
 
         if (!found) return nullptr; // 경로가 틀림
 
@@ -176,7 +180,7 @@ File* FAT32::open_file(const char* path, uint64_t base_dir_id) {
             // High/Low 클러스터 합치기
             uint32_t file_clus = ((uint32_t)entry.FstClusHI << 16) | entry.FstClusLO;
 
-            return new File(this, file_clus, entry.FileSize);
+            return new File(this, file_clus, entry_offset, entry.FileSize);
         }
         else {
             // [진행 중]
@@ -244,10 +248,115 @@ int FAT32::read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint
     }
 	return total_read;
 }
+int FAT32::write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, uint64_t offset, const void* buffer, uint32_t size) {
+    uint32_t current_cluster = (uint32_t)file_id;
+    uint32_t bytes_per_cluster = bpb.BytesPerSector * bpb.SectorsPerCluster;
 
+    uint64_t cluster_offset = offset / bytes_per_cluster;
+    uint64_t intra_cluster_offset = offset % bytes_per_cluster;
+
+    // 시작 클러스터까지 이동
+    uint32_t prev_cluster = current_cluster;
+    for (uint64_t i = 0; i < cluster_offset; i++) {
+        prev_cluster = current_cluster;
+        current_cluster = get_next_cluster_from_fat(current_cluster);
+        if (current_cluster >= 0x0FFFFFF8) {
+            // 클러스터 부족 -> 새로 할당
+            uint32_t new_cluster = alloc_cluster();
+            if (!new_cluster) return 0;
+            append_cluster(prev_cluster, new_cluster);
+            current_cluster = new_cluster;
+        }
+    }
+
+    const uint8_t* in_buf = (const uint8_t*)buffer;
+    uint32_t total_written = 0;
+    uint64_t data_start_lba = bpb.ReservedSectorCount + (uint64_t)bpb.NumFATs * bpb.FATSize32;
+
+    while (total_written < size) {
+        uint64_t cluster_start_offset = (data_start_lba + (uint64_t)(current_cluster - 2) * bpb.SectorsPerCluster)
+            * bpb.BytesPerSector;
+
+        uint32_t to_write = bytes_per_cluster - intra_cluster_offset;
+        if (to_write > size - total_written) to_write = size - total_written;
+
+        bool success = this->partitioner->write(
+            (Partitioner::PartitionInfo&)this->data,
+            cluster_start_offset + intra_cluster_offset,
+            in_buf + total_written,
+            to_write
+        );
+        if (!success) break;
+
+        total_written += to_write;
+        intra_cluster_offset = 0;
+        if (total_written >= size) break;
+
+        prev_cluster = current_cluster;
+        current_cluster = get_next_cluster_from_fat(current_cluster);
+        if (current_cluster >= 0x0FFFFFF8) {
+            uint32_t new_cluster = alloc_cluster();
+            if (!new_cluster) break;
+            append_cluster(prev_cluster, new_cluster);
+            current_cluster = new_cluster;
+        }
+    }
+
+    // 파일 크기 업데이트
+    if (offset + total_written > file_size) {
+        file_size = offset + total_written;
+        // 디렉토리 엔트리 크기 업데이트
+        uint32_t new_size = (uint32_t)file_size;
+        partitioner->write(
+            (Partitioner::PartitionInfo&)this->data,
+            meta_id + (uint64_t) & ((FAT32_DirEntry*)0)->FileSize,
+            &new_size,
+            sizeof(uint32_t)
+        );
+    }
+
+    return total_written;
+}
 void FAT32::list_directory(const char* path) {
 
 }
 void FAT32::close_file(void* file_handle) {
 
+}
+uint32_t FAT32::alloc_cluster() {
+    uint64_t fat_start = (uint64_t)bpb.ReservedSectorCount * bpb.BytesPerSector;
+    uint32_t total_clusters = (bpb.FATSize32 * bpb.BytesPerSector) / 4;
+
+    for (uint32_t i = 2; i < total_clusters; i++) {
+        uint32_t entry = 0;
+        partitioner->read(
+            (Partitioner::PartitionInfo&)this->data,
+            fat_start + (uint64_t)i * 4,
+            &entry,
+            sizeof(uint32_t)
+        );
+        entry &= 0x0FFFFFFF;
+        if (entry == 0) {
+            // 찾았으면 EOC로 마킹
+            uint32_t eoc = 0x0FFFFFFF;
+            partitioner->write(
+                (Partitioner::PartitionInfo&)this->data,
+                fat_start + i * 4,
+                &eoc,
+                sizeof(uint32_t)
+            );
+            return i;
+        }
+    }
+    return 0; // 실패
+}
+bool FAT32::append_cluster(uint32_t last_cluster, uint32_t new_cluster) {
+    uint64_t fat_start = (uint64_t)bpb.ReservedSectorCount * bpb.BytesPerSector;
+    uint32_t val = new_cluster & 0x0FFFFFFF;
+    return partitioner->write(
+        (Partitioner::PartitionInfo&)this->data,
+        fat_start + last_cluster * 4,
+        &val,
+        sizeof(uint32_t)
+    );
 }

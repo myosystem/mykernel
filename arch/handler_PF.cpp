@@ -15,13 +15,37 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
     if (!(error_code & (1ull << 2ull))) {
         uint64_t pml4_entry = (cr2 >> 39) & 0x1FF;
-        if (256 <= pml4_entry && pml4_entry <= 267) {
+        if (256 <= pml4_entry && pml4_entry <= 268) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
             memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
             return;
         }
     }
     if (now_process) {
+        if (error_code & 1) { // Present인데 PF = 권한 위반
+            uint64_t pte = virt_page_allocator->get_mapping(cr2 & ~0xFFFULL);
+            if (pte != ~0ULL && (pte & VirtPageAllocator::PTE_COW)) {
+                // CoW 처리
+                uint64_t pa = pte & PTE_ADDR_MASK;
+                uint64_t saved_flags = (pte >> 60) & 0x7;
+                uint64_t new_flags = VirtPageAllocator::P | VirtPageAllocator::US;
+                if (saved_flags & 0x2) new_flags |= VirtPageAllocator::RW;
+                if (saved_flags & 0x4) new_flags |= VirtPageAllocator::NX;
+                if (phy_page_allocator->get_refcount(pa) == 1) {
+                    // 나만 쓰는 페이지, 그냥 권한 복구
+                    virt_page_allocator->change_flags(cr2 & ~0xFFFULL, new_flags);
+                }
+                else {
+                    // 복사
+                    uint64_t new_pa = phy_page_allocator->alloc_phy_page();
+                    memcpy((void*)(new_pa + HHDM_BASE), (void*)(pa + HHDM_BASE), PageSize);
+                    phy_page_allocator->put_page(pa);
+					virt_page_allocator->free_virt_page(cr2 & ~0xFFFULL);
+                    virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, new_pa, new_flags);
+                }
+                return;
+            }
+        }
         if (now_process->user_stack_top <= cr2 && cr2 < now_process->user_stack_bottom) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
             memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);

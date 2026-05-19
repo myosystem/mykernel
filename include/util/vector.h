@@ -18,6 +18,26 @@ public:
         new_index = 0;
         arr_size = 0;
     }
+    vector(vector&& other) {
+        front_page = other.front_page;
+        back_page = other.back_page;
+        new_index = other.new_index;
+        arr_size = other.arr_size;
+        other.front_page = (void*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE);
+        other.back_page = other.front_page;
+        *((void**)other.back_page) = nullptr;
+        other.new_index = 0;
+        other.arr_size = 0;
+    }
+    vector(const vector& other) {
+        front_page = (void*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE);
+        back_page = front_page;
+        *((void**)back_page) = nullptr;
+        new_index = 0;
+        arr_size = 0;
+        for (size_t i = 0; i < other.arr_size; i++)
+            push_back(const_cast<vector&>(other)[i]);
+    }
     ~vector() {
         void* curr = front_page;
         while (curr != nullptr) {
@@ -26,7 +46,25 @@ public:
             curr = next;
         }
     }
-
+    vector& operator=(const vector& other) {
+        if (this == &other) return *this;
+        // 기존 페이지 해제
+        void* curr = front_page;
+        while (curr != nullptr) {
+            void* next = *((void**)curr);
+            phy_page_allocator->put_page((uint64_t)curr - HHDM_BASE);
+            curr = next;
+        }
+        // 새로 복사
+        front_page = (void*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE);
+        back_page = front_page;
+        *((void**)back_page) = nullptr;
+        new_index = 0;
+        arr_size = 0;
+        for (size_t i = 0; i < other.arr_size; i++)
+            push_back(const_cast<vector&>(other)[i]);
+        return *this;
+    }
     void push_back(const T& item) {
         // 8바이트 정렬을 고려한 오프셋 계산 (선택 사항이지만 권장)
         size_t aligned_size = (sizeof(T) + 7) & ~7;
@@ -97,7 +135,8 @@ public:
             uart_print("vector error!!");
             __asm__ __volatile__("hlt");
         }
-        return ((T*)((uint64_t)curr + 8))[item_index];
+		T* result = (T*)((uint8_t*)curr + 8 + item_index * aliged_size);
+        return *result;
     }
     size_t size() const {
         return arr_size;
@@ -178,6 +217,9 @@ public:
 			return nullresult; // 범위 초과 시 nullptr 반환
         }
 		return curr->slots[slot_index];
+	}
+    size_t get_size() const {
+        return size;
 	}
 };
 #endif // __VECTOR_H__

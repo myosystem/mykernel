@@ -22,6 +22,7 @@ public:
 	Partitioner() {}
 	virtual void init(Disk* disk) = 0;
 	virtual bool read(PartitionInfo& pinfo, uint64_t addr, void* buffer, uint64_t size) = 0;
+	virtual bool write(PartitionInfo& pinfo, uint64_t addr, const void* buffer, uint64_t size) = 0;
 	virtual ~Partitioner() {}
 	static Partitioner* create_default();
 	static void* operator new(size_t size) noexcept {

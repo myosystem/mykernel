@@ -21,6 +21,7 @@ private:
 public:
 	void init(Disk* disk) override;
 	bool read(PartitionInfo& pinfo, uint64_t addr, void* buffer, uint64_t size) override;
+	bool write(PartitionInfo& pinfo, uint64_t addr, const void* buffer, uint64_t size) override;
 };
 
 #endif // __MBR_H__

@@ -255,36 +255,58 @@ struct EndpointDescriptor {
     uint8_t  bInterval;
 } __attribute__((packed));
 class XHCIController;
+enum DeviceType {
+    DEVICE_UNKNOWN = 0x0,
+    DEVICE_MSC = 0x100,
+	DEVICE_HID = 0x200,
+    DEVICE_HID_MOUSE = 0x201,
+    DEVICE_HID_KEYBOARD = 0x202,
+};
+class _XHCIDevice {
+public:
+    _XHCIDevice(uint32_t slot_id, uint32_t port_id, volatile uint32_t* portsc, uint64_t* xhci_dcbaa, XHCIController* controller)
+		: controller(controller), slot_id(slot_id), port_id(port_id), portsc(portsc), xhci_dcbaa(xhci_dcbaa) {}
+    XHCIController* controller;        // XHCIController*
+    uint32_t slot_id;
+    volatile uint32_t* portsc;
+    uint32_t port_id;
+    uint64_t* xhci_dcbaa;
+    DeviceType device_type;
+    uint8_t state;
+    uint16_t max_packet_size;
+    uint64_t device_id;
+    XHCIRing* ep0_ring;
+    uint8_t ep0_ring_buff[sizeof(XHCIRing)];
+    union {
+        struct {
+            uint8_t config_value;
+            uint8_t bulk_in_addr;
+            uint8_t bulk_out_addr;
+        } msc;
+        struct {
+            uint8_t protocol;
+            uint8_t ep_addr;
+            uint8_t interval;
+            uint16_t report_desc_len;
+            uint16_t interface_number;
+        } hid;
+    } device_info;
+protected:
+};
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
-class XHCIDevice {
+class XHCIDevice : public _XHCIDevice {
 public:
     XHCIDevice(uint32_t slot_id, uint32_t port_id, volatile uint32_t* portsc, uint64_t* xhci_dcbaa, XHCIController* controller)
-        : controller(controller), slot_id(slot_id), port_id(port_id), portsc(portsc), xhci_dcbaa(xhci_dcbaa) {}
+        : _XHCIDevice(slot_id, port_id, portsc, xhci_dcbaa, controller) {}
     void init();
     uint32_t get_slot_id() const { return slot_id; }
 	uint32_t get_port_id() const { return port_id; }
     bool send_configure_endpoint_command(uint64_t input_ctx_phys);
     void* operator new(size_t size);
 	void operator delete(void* ptr);
-    XHCIController* controller;
-private:
-    uint32_t slot_id;
-    uint32_t port_id;
     InputContext* input_ctx;
     DeviceContext* output_ctx;
-    volatile uint32_t* portsc;
-    uint64_t* xhci_dcbaa;
-    uint8_t state;
-    uint64_t device_id;
-    XHCIRing* ep0_ring;
-    uint8_t ep0_ring_buff[sizeof(XHCIRing)];
-    struct {
-        bool is_msc = false;
-        uint8_t config_value = 0;
-        uint8_t bulk_in_addr = 0;
-        uint8_t bulk_out_addr = 0;
-        uint16_t max_packet_size = 0;
-    } msc_info;
+private:
 };
 class XHCIController : public Controller {
 public:
@@ -300,6 +322,7 @@ public:
     volatile uint32_t* doorbell_base;
     EventRing* event_ring;
     void eoi();
+    uint64_t intr_base;
 private:
     volatile uint8_t* mmio_base;         // BAR5 가상 주소
     uint64_t  bar_size;
@@ -309,7 +332,6 @@ private:
     vector<XHCIDevice<InputContext32, DeviceContext32, SlotContext32, EndpointContext32>*> devices32;
     vector<XHCIDevice<InputContext64, DeviceContext64, SlotContext64, EndpointContext64>*> devices64;
 	vector<PendingCommand> pending_cmds;
-    uint64_t intr_base;
     volatile uint32_t* usbsts;
 	friend class XHCIDevice<InputContext32, DeviceContext32, SlotContext32, EndpointContext32>;
 	friend class XHCIDevice<InputContext64, DeviceContext64, SlotContext64, EndpointContext64>;

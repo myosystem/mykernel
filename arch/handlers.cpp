@@ -1,6 +1,5 @@
 #include "kernel/kernel.h"
 #include "arch/handler.h"
-#include "arch/idt.h"
 #include "arch/io.h"
 #include "util/util.h"
 #include "kernel/console.h"
@@ -81,16 +80,16 @@ void mouse_handler(interrupt_frame_t* frame) {
                 if (cursor_y < 0) cursor_y = 0;
                 if (cursor_x >= (int)bootinfo->framebufferWidth) cursor_x = bootinfo->framebufferWidth - 1;
                 if (cursor_y >= (int)bootinfo->framebufferHeight) cursor_y = bootinfo->framebufferHeight - 1;
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_MOVE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_MOVE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             }
             if (pressd & 0b001)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             if (pressd & 0b010)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             if (released & 0b001)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             if (released & 0b010)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} });
+                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
         }
     }
     lapic_eoi();
@@ -311,9 +310,19 @@ void waiting_idthandler() {
         "iretq\n\t"
         );
 }
+void basic_callback(void* event_info,uint64_t status, uint64_t control, void* ctx) {
+	KEvent* event = (KEvent*)event_info;
+    add_process(event->process_id);
+    ((context_t*)GetProcess(event->process_id)->kernel_stack)->rax = status << 32ull | control;
+}
 extern "C" void waiting_handler(context_t* frame) {
     now_process->kernel_stack = (uint64_t*)frame;
     switch (frame->rax) {
+    case 0x0:   //CPU yield
+    {
+		process_queue->enqueue(now_process->process_id);
+        break; // 그냥 다음 프로세스로 넘어가기만 하면 됨
+    }
     case 0x4:   //MSG waiting
     {
 		if (!now_process->msg_empty()) {
@@ -322,6 +331,10 @@ extern "C" void waiting_handler(context_t* frame) {
         }
 		now_process->state |= PROCESS_STATE_MSGWAIT; // 메시지 대기 상태
         break;
+    }
+    case 0x5:   //MSG blocking wait
+    {
+		break; // MSG waiting과 동일하게 처리, 대기 상태로 전환만 하면 됨
     }
     case 32:    //Timer waiting
     {
@@ -347,6 +360,8 @@ extern "C" void waiting_handler(context_t* frame) {
 		event.arg[0] = frame->rdi; //
 		event.arg[1] = frame->rsi; //
 		event.arg[2] = frame->rdx; //
+		event.callback = basic_callback;
+		event.callback_ctx = nullptr; // 필요에 따라 콜백 컨텍스트 설정
 		xhci_event->push_back(event);
         break;
     }

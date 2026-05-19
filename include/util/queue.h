@@ -12,9 +12,10 @@ class queue {
         *((void**)back_page) = nullptr; // 다음 페이지 포인터 초기화 필수!
         front_index = 0;
         back_index = 0;
+		size = 0;
     }
     constexpr ~queue() {
-        volatile void* curr = front_page;
+        void* curr = front_page;
         while (curr != nullptr) {
             void* next = *((void**)curr);
             phy_page_allocator->put_page((uint64_t)curr - HHDM_BASE);
@@ -35,17 +36,19 @@ class queue {
 
         *((T*)((uint8_t*)back_page + back_index + 8)) = item;
         back_index += aligned_size;
+        size++;
     }
     constexpr T dequeue() {
         // isEmpty() 체크는 호출하는 쪽이나 여기서 확실히!
         T item = *((T*)((uint8_t*)front_page + front_index + 8));
         size_t aligned_size = (sizeof(T) + 7) & ~7;
         front_index += aligned_size;
+        size--;
 
         // 만약 현재 페이지를 다 읽었고, 다음 페이지가 있다면 교체
         // (front_page == back_page)인 경우는 아직 다음 페이지가 없는 상태임
         if (front_index + aligned_size > PageSize - 8 && front_page != back_page) {
-            volatile void* temp_page = front_page;
+            void* temp_page = front_page;
             front_page = *((void**)front_page);
             phy_page_allocator->put_page((uint64_t)temp_page - HHDM_BASE);
             front_index = 0;
@@ -65,11 +68,21 @@ class queue {
         size_t last_index = back_index - aligned_size;
         return (T*)((uint8_t*)back_page + last_index + 8);
     }
+    uint64_t get_size() const {
+        return size;
+	}
+    void operator+=(const T& item) {
+        enqueue(item);
+	}
+    T operator*() {
+        return dequeue();
+    }
 private:
-    volatile void* front_page;
-    volatile void* back_page;
-    volatile size_t front_index;
-    volatile size_t back_index;
+    void* front_page;
+    void* back_page;
+    size_t front_index;
+    size_t back_index;
+	uint64_t size; // 전체 요소 수 (선택 사항)
 };
 
 #endif // __QUEUE_H__

@@ -57,3 +57,13 @@ bool GPTPartitioner::read(PartitionInfo& pinfo, uint64_t addr, void* buffer, uin
     this->master_disk->read_bytes(start_addr, buffer, size);
     return true;
 }
+bool GPTPartitioner::write(PartitionInfo& pinfo, uint64_t addr, const void* buffer, uint64_t size) {
+    uint64_t partition_size = (pinfo.last_lba - pinfo.first_lba + 1) * SECTOR_SIZE;
+
+    if (addr + size > partition_size) {
+        return false;
+    }
+    uint64_t start_addr = pinfo.first_lba * SECTOR_SIZE + addr;
+    this->master_disk->write_bytes(start_addr, buffer, size);
+    return true;
+}

@@ -26,3 +26,6 @@ bool MBRPartitioner::read(PartitionInfo& pinfo, uint64_t addr, void* buffer, uin
 	this->master_disk->read_bytes(start_addr, buffer, size);
 	return true;
 }
+bool MBRPartitioner::write(PartitionInfo& pinfo, uint64_t addr, const void* buffer, uint64_t size) {
+	return false;
+}

@@ -15,6 +15,7 @@
 #define PROCESS_STATE_READY     0b1
 #define PROCESS_STATE_WAITING   0b10
 #define PROCESS_STATE_MSGWAIT   0b100
+#define PROCESS_STATE_ZOMBIE    0b1000
 struct TSS64 {
     uint32_t reserved0;
     uint64_t rsp0;
@@ -57,6 +58,10 @@ struct mmap_entry {
     uint64_t flags;         // 1 used/free, 2 r, 3 w, 4 shared
     uint64_t arg;
     mmap_entry* next;
+    mmap_entry() {};
+    ~mmap_entry() {};
+	void* operator new(size_t size) noexcept;
+	void operator delete(void* ptr);
 };
 struct sigaction {
     void     (*sa_handler)(int);           // 핸들러 함수
@@ -78,6 +83,9 @@ struct KEvent {
     uint64_t process_id;
     uint64_t type;      // 이벤트 타입 (예: 타이머, IO 등)
 	uint64_t arg[4];   // 이벤트에 필요한 추가 정보 (예: IO 디바이스 번호, 파일 디스크립터 등)
+    uint64_t event_id;
+    void (*callback)(void* event_info,uint64_t status, uint64_t control, void* ctx);
+    void* callback_ctx;
 };
 #define EVENT_TYPE_TIMER 1
 #define EVENT_TYPE_SLEEP 2
@@ -94,6 +102,12 @@ static inline bool operator<(const KEvent& a, const KEvent& b) {
 enum {
     MSG_NONE = 0,
 
+	MSG_KEY_BASE = 0x100,
+	MSG_KEY_PRESS = MSG_KEY_BASE + 1,
+	MSG_KEY_RELEASE = MSG_KEY_BASE + 2,
+
+	MSG_TIMER_BASE = 0x200,
+	MSG_TIMER_EXPIRED = MSG_TIMER_BASE + 1,
     // generic IPC
     MSG_IPC_BASE = 0x1000,
 
@@ -136,15 +150,21 @@ typedef struct {
 
     uint64_t timestamp;     // 8 bytes
 } __attribute__((packed)) msg_t;
+#define MAX_MESSAGE_QUEUE_SIZE 128
+#define MAX_MESSAGE_QUEUE_INT 256
 class Process {
 private:
     queue<msg_t> msgq;
+	queue<uint64_t> waiting_msgq; // 메시지 대기 중인 프로세스들의 PID 저장
+	vector<uint64_t> children; // 자식 프로세스들의 PID 저장
 public:
     uint64_t cr3;
     uint64_t kernel_stack_phys;
     uint64_t user_stack_bottom;
     uint64_t user_stack_top;
     uint64_t state; // always 1
+    uint64_t time_slice;
+    uint64_t parent;
     VirtPageAllocator* pallocator;
     uint8_t allocator_buffer[sizeof(VirtPageAllocator)];
     uint64_t code_va_base;
@@ -155,20 +175,22 @@ public:
     uint64_t process_id;
     Partition* current_partition;
 	uint64_t cwd_cluster;
-    uint64_t time_slice;
     pointer_vector open_files;
     Process() {};
-    ~Process() {};
-    void init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster);
+    ~Process();
+    void init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init = true);
     void addCode(void* code_addr);
     void setHeap();
     mmap_entry* isAddrInMMap(uint64_t va) const;
     uint64_t mmap(uint64_t size, uint64_t flags, uint64_t arg);
 	bool munmap(uint64_t va, uint64_t size);
-    void msg_recv(msg_t msg);
+    void msg_recv(msg_t msg, bool blocking);
     bool msg_pop(msg_t* msg);
 	bool msg_empty() const;
     void run_process();
+    void run_process(uint64_t zombie_page);
+    uint64_t fork();
+    
     void* operator new(size_t size);
     void operator delete(void* ptr);
 };
@@ -183,4 +205,5 @@ Process* GetProcess(size_t index);
 void add_process(size_t process_id);
 Process* next_process();
 uint64_t get_process_count();
+uint64_t get_max_process_id();
 #endif /*__PROCESS_H__*/

@@ -16,3 +16,21 @@ unsigned long long call_xhci(...) {
 		::: "rax", "rcx", "r11", "memory"
     );
 }
+__attribute__((naked,noinline))
+unsigned long long yield() {
+    __asm__ __volatile__(
+        "mov rax, 0x0\n\t"
+        "int 0x81\n\t"
+        "ret\n\t"
+        ::: "rax", "rcx", "r11", "memory"
+    );
+}
+__attribute__((naked, noinline))
+unsigned long long call_msg_block() {
+    __asm__ __volatile__(
+        "mov rax, 0x4\n\t"
+        "int 0x81\n\t"
+        "ret\n\t"
+        ::: "rax", "rcx", "r11", "memory"
+    );
+}

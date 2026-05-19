@@ -85,6 +85,7 @@ uint64_t PhysPageAllocator::get_pages(uint64_t addr, uint64_t page_count) {
     _unlockp();
     return result;
 }
+extern bool booting;
 uint64_t PhysPageAllocator::put_page(uint64_t addr) {
     _lockp();
     uint64_t result = 1;
@@ -141,3 +142,7 @@ void PhysPageAllocator::init(uint64_t* _bitmap, uint64_t* _refcount, uint64_t _t
 uint64_t PhysPageAllocator::get_total_pages() const { return total_pages; }
 uint64_t PhysPageAllocator::get_used_pages() const { return used_pages; }
 uint64_t PhysPageAllocator::get_free_pages() const { return total_pages - used_pages; }
+uint64_t PhysPageAllocator::get_refcount(uint64_t addr) const {
+    uint64_t page_index = addr / 4096;
+    return refcount[page_index];
+}

@@ -43,4 +43,5 @@ public:
 		return state & 0b1;
 	}
 };
+extern vector<Disk*>* disks;
 #endif /*__DISK_H__*/

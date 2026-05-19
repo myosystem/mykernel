@@ -30,7 +30,8 @@ public:
     virtual File* open_file(const char* path, uint64_t base_dir_id) {
         return nullptr;
     }
-    virtual int read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint32_t size) { return -1; }
+    virtual int read_file(uint64_t file_id, uint64_t offset, void* buffer, uint32_t size) { return -1; }
+    virtual int write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, uint64_t offset, const void* buffer, uint32_t size) { return -1; }
     virtual void list_directory(const char* path) {}
     virtual void close_file(void* file_handle) {}
 	void* operator new(size_t size) noexcept;

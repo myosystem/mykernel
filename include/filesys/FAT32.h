@@ -52,7 +52,7 @@ struct FAT32_DirEntry {
 class FAT32 : public Partition {
 private:
     uint32_t get_next_cluster_from_fat(uint32_t current_cluster);
-    bool find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry);
+    bool find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry, uint64_t* out_offset);
 public:
     FAT32_BPB bpb;
     FAT32(PartitionInfo& pinfo, Partitioner* partitioner);
@@ -60,7 +60,10 @@ public:
     void init() override;
     File* open_file(const char* path, uint64_t base_dir_id) override;
     int read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint32_t size) override;
+    int write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, uint64_t offset, const void* buffer, uint32_t size) override;
     void list_directory(const char* path) override;
     void close_file(void* file_handle) override;
+    uint32_t alloc_cluster();
+    bool append_cluster(uint32_t last_cluster, uint32_t new_cluster);
 };
 #endif

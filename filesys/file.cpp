@@ -5,12 +5,14 @@ int File::read(void* buf, uint32_t len) {
 	if (current_offset + len > file_size) {
 		len = (uint32_t)(file_size - current_offset);
 	}
-	int res = partition->read_file(start_cluster, current_offset, buf, len);
+	int res = partition->read_file(file_id, current_offset, buf, len);
 	current_offset += res;
 	return res;
 }
 int File::write(const void* buf, uint32_t len) {
-	return -1; //읽기 전용 파일 시스템
+    int res = partition->write_file(file_id, meta_id, file_size, current_offset, buf, len);
+    current_offset += res;
+    return res;
 }
 int File::seek(uint64_t offset) {
 	if (offset > file_size) return -1;
@@ -24,6 +26,13 @@ uint64_t File::size() {
 	return file_size;
 }
 void File::close() {
+    refcount--;
+    if (refcount == 0) {
+        delete this;
+    }
+}
+void File::open() {
+    refcount++;
 }
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition) {
     PathResolveResult result = { nullptr, nullptr };

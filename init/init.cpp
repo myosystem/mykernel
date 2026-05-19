@@ -32,6 +32,7 @@
 //265 controller queue          0xFFFF848000000000
 //266 xhci queue                0xFFFF850000000000
 //267 protocol queue	        0xFFFF858000000000
+//268 HID queue                 0xFFFF860000000000
 //509 mmio
 //510 HHDM
 //511 kernel + bootdata + init stack
@@ -47,8 +48,8 @@ void init_apic() {
     setup_lapic_timer_tsc_deadline(32);
     ioapic_set_redirection(1, 0x21, 0);
     ioapic_set_redirection(12, 0x2C, 0);
-    enable_cursor();
-	enable_keyboard();
+//    enable_cursor();
+//	enable_keyboard();
 }
 
 void init_interrupts() {
@@ -85,9 +86,10 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     uart_init();
     init_tss(0, 0);
     init_interrupts();
+    init_process();
 
     virt_page_allocator->free_all_low_pages();
-	for (uint64_t i = 256; i <= 267; i++) {
+	for (uint64_t i = 256; i <= 268; i++) {
 		volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
         *pml4_entry_addr = 0;
     }
@@ -177,10 +179,9 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     File* display_file = kernel_open_file("#0/DISPLAY.O");
     File* test_file = kernel_open_file("#0/TEST.O");
 
-    init_process();
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
     Process* display = new Process();
-    display->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_cwd_cluster());
+    display->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_file_id());
     while (display_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         display->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
@@ -190,7 +191,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	//add_process(display->process_id);
     
     Process* test = new Process();
-    test->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_cwd_cluster());
+    test->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         test->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }

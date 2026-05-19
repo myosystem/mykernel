@@ -4,6 +4,7 @@
 #include "util/size.h"
 #define HHDM_BASE 0xFFFFFF0000000000ULL
 #define MMIO_BASE 0xFFFFFE8000000000ULL
+#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 extern uint64_t mmio_bump;
 class VirtPageAllocator {
 private:
@@ -21,6 +22,8 @@ public:
     static constexpr uint64_t PS = 1ull << 7;   // 페이지 크기 (4KB / 2MB / 1GB)
     static constexpr uint64_t G = 1ull << 8;    // 전역 페이지
 
+	static constexpr uint64_t PTE_COW = 1ull << 9; // COW 페이지 여부 (소프트웨어적으로만 사용)
+
     static constexpr uint64_t NX = 1ull << 63;
     VirtPageAllocator();
     void* pml4; // 커널 가상주소(= HHDM + PML4 물리)로 보관
@@ -34,6 +37,8 @@ public:
     void free_all_low_pages();
     void free_virt_pages(uint64_t va, uint64_t size);
     uint64_t get_mapping(uint64_t va);
+	bool copy(VirtPageAllocator& source, uint64_t start, uint64_t size);
+	bool change_flags(uint64_t va, uint64_t flags);
 };
 
 #endif // __VIRT_PAGE_ALLOCATOR__

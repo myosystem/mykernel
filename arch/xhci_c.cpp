@@ -3,12 +3,15 @@
 #include "util/util.h"
 #include "driver/xhci_p.h"
 #include "driver/xhci.h"
+#include "driver/hid.h"
 #include "arch/handler.h"
 #include "kernel/process.h"
 #include "arch/lapic.h"
 #include "arch/idt.h"
 #define XHCI_DEVICE_BASE 0xFFFF850000000000ULL
-
+void mouse_callback(void* event_info, uint64_t status, uint64_t control, void* ctx);
+extern bool booting;
+void basic_callback(void* event_info, uint64_t status, uint64_t control, void* ctx);
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
 void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init() {
 	input_ctx = (InputContext*)(phy_page_allocator->alloc_phy_page() + MMIO_BASE);
@@ -104,11 +107,11 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         uart_print_hex(output_ctx->endpoints[0].info1 & 0x7);
         uart_print("\n");
 		setup.parameter1 = 0x02000680; // wValue(0200:Config)
-        setup.parameter2 = 0x002C0000; //0x00090000
+        setup.parameter2 = 0x00090000; //0x00090000
 		setup.status = 8;              // TRB Transfer Length (항상 8)
 		setup.control = 0x00000840; // IDT(1), Type(Setup:2), Cycle(1)
 
-		data.status = 0x2C;              // 받을 크기 (9바이트)
+		data.status = 0x09;              // 받을 크기 (9바이트)
 		data.control = 0x00010C00; // Type(Data:3), DIR(In:1), Cycle(1)
 
         status.control = 0x00001060; // Type(Status:4), Cycle(1)
@@ -129,7 +132,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         if (total_length > 4096) {
 			return; // 이상한 데이터 방지
         }
-        /*
+        
         setup.parameter2 = ((uint32_t)total_length << 16);
 		data.status = total_length; // 받을 크기 (전체 Configuration Descriptor 크기)
 		//status도 동일
@@ -140,7 +143,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         __asm__ __volatile__("sfence" ::: "memory");
 		controller->doorbell_base[slot_id] = 1;
         controller->wait_command(status_ptr, slot_id, port_id, 32); // Transfer Event 이벤트 대기 (Type 32)
-        */
+        
         uint8_t* ptr = desc;
         uint8_t* end = desc + total_length;
 
@@ -155,65 +158,130 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
             switch (type) {
             case 0x02: { // Configuration
                 ConfigurationDescriptor* cfg = (ConfigurationDescriptor*)ptr;
-                msc_info.config_value = cfg->bConfigurationValue;
-                uart_print("Config Value: "); uart_print_hex(msc_info.config_value);
+                if (device_type == DEVICE_MSC) {
+                    device_info.msc.config_value = cfg->bConfigurationValue;
+                }
                 break;
             }
             case 0x04: { // Interface
                 InterfaceDescriptor* iface = (InterfaceDescriptor*)ptr;
                 uart_print("\nInterface Class: "); uart_print_hex(iface->bInterfaceClass);
-
+                uart_print(" Protocol: "); uart_print_hex(iface->bInterfaceProtocol); // 추가
                 if (iface->bInterfaceClass == 0x08 &&
                     iface->bInterfaceSubClass == 0x06 &&
                     iface->bInterfaceProtocol == 0x50) {
-                    msc_info.is_msc = true;
+					device_type = DEVICE_MSC;
                     uart_print(" [MSC/SCSI/BOT Detected!]");
+                }
+                else if (iface->bInterfaceClass == 0x03) {
+                    uart_print(" InterfaceNum: "); uart_print_hex(iface->bInterfaceNumber);
+                    uart_print(" NumEndpoints: "); uart_print_hex(iface->bNumEndpoints);
+                    if (device_type == DEVICE_HID) {
+                        break; // 이미 감지됐으면 스킵
+                    }
+                    device_type = DEVICE_HID;   //정확한 분류는 나중에
+					uart_print(" [HID Detected!]");
+					device_info.hid.interface_number = iface->bInterfaceNumber;
                 }
                 break;
             }
             case 0x05: { // Endpoint
                 EndpointDescriptor* ep = (EndpointDescriptor*)ptr;
-                if (msc_info.is_msc) {
-                    // Bulk 엔드포인트만 추출 (Attributes 0x02)
+                if (device_type == DEVICE_MSC) {
                     if ((ep->bmAttributes & 0x03) == 0x02) {
-                        if (ep->bEndpointAddress & 0x80) { // In
-                            msc_info.bulk_in_addr = ep->bEndpointAddress;
-                            msc_info.max_packet_size = ep->wMaxPacketSize; // 보통 512
-                            uart_print("\n Found Bulk-IN: "); uart_print_hex(msc_info.bulk_in_addr);
+                        if (ep->bEndpointAddress & 0x80) {
+                            device_info.msc.bulk_in_addr = ep->bEndpointAddress;
+                            max_packet_size = ep->wMaxPacketSize;
                         }
-                        else { // Out
-                            msc_info.bulk_out_addr = ep->bEndpointAddress;
-                            uart_print("\n Found Bulk-OUT: "); uart_print_hex(msc_info.bulk_out_addr);
+                        else {
+                            device_info.msc.bulk_out_addr = ep->bEndpointAddress;
                         }
                     }
                 }
+                else if (device_type == DEVICE_HID) {
+                    if ((ep->bmAttributes & 0x03) == 0x03 && (ep->bEndpointAddress & 0x80)) {
+                        device_info.hid.ep_addr = ep->bEndpointAddress;
+                        device_info.hid.interval = ep->bInterval;
+                        max_packet_size = ep->wMaxPacketSize;
+                    }
+                }
+                break;
+            }
+            case 0x21: { // HID Descriptor
+                uint16_t rep_len = ptr[7] | (ptr[8] << 8); // wDescriptorLength
+                device_info.hid.report_desc_len = rep_len;
+				uart_print("\nHID Report Descriptor Length: "); uart_print_hex(rep_len);
                 break;
             }
             }
             ptr += length; // 다음 디스크립터로 점프
         }
         uart_print("\n---------------------------------------\n");
-        if (msc_info.is_msc) {
-            uint8_t in_ep_num = msc_info.bulk_in_addr & 0x0F; // 0x81 → 1
-            uint8_t out_ep_num = msc_info.bulk_out_addr & 0x0F; // 0x02 → 2
+        switch (device_type) {
+        case DEVICE_MSC:
+        {
+            uint8_t in_ep_num = device_info.msc.bulk_in_addr & 0x0F; // 0x81 → 1
+            uint8_t out_ep_num = device_info.msc.bulk_out_addr & 0x0F; // 0x02 → 2
             uint8_t dci_in = (in_ep_num * 2) + 1; // 3
             uint8_t dci_out = (out_ep_num * 2);      // 4
 
             auto* protocol = new XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext>(
                 this, slot_id, dci_in, dci_out);
-			protocol->initialize();
+            protocol->initialize();
             XHCIDisk* disk = new XHCIDisk(0, 0, 0, port_id, protocol);
             disk->init();
 
             if (controller->on_disk_found) {
                 controller->on_disk_found(disk);
             }
+            break;
+        }
+        case DEVICE_HID: {
+            if (device_info.hid.report_desc_len == 0)
+                device_info.hid.report_desc_len = 256; // fallback
+            uint8_t ep_num = device_info.hid.ep_addr & 0x0F;
+            uint8_t dci = (ep_num * 2) + 1;
+
+            // GET_DESCRIPTOR (HID Report Descriptor)
+            TRB setup = { 0 };
+            setup.parameter1 = 0x22000681; // ← 이렇게 해야 함
+            setup.parameter2 = ((uint32_t)device_info.hid.report_desc_len << 16)
+                | device_info.hid.interface_number;
+            setup.status = 8;
+            setup.control = (2 << 10) | (1 << 6);
+
+            uint64_t rep_phys = phy_page_allocator->alloc_phy_page();
+            virt_page_allocator->alloc_virt_page(rep_phys + MMIO_BASE, rep_phys,
+                VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
+            memset((void*)(rep_phys + MMIO_BASE), 0, 4096);
+
+            TRB data = { 0 };
+            data.parameter1 = (uint32_t)rep_phys;
+            data.parameter2 = (uint32_t)(rep_phys >> 32);
+            data.status = device_info.hid.report_desc_len;
+            data.control = (3 << 10) | (1 << 16);
+
+            TRB status = { 0 };
+            status.control = (4 << 10) | (1 << 5);
+
+            ep0_ring->push(setup);
+            ep0_ring->push(data);
+            TRB* status_ptr = (TRB*)ep0_ring->push(status);
+            __asm__ __volatile__("sfence" ::: "memory");
+            controller->doorbell_base[slot_id] = 1;
+            controller->wait_command(status_ptr, slot_id, port_id, 32, 1);
+
+            auto* hid = new XHCIHIDDevice<InputContext, DeviceContext, SlotContext, EndpointContext>(this, dci);
+            hid->max_packet_size = max_packet_size;
+            hid->hid_init((uint8_t*)(rep_phys + MMIO_BASE), device_info.hid.report_desc_len);
+            break;
+        }
+        default:
+            break;
         }
     }
     else {
         uart_print("param1="); uart_print_hex(addr_trb.parameter1); uart_print("\n");
-        uart_print("param2="); uart_print_hex(addr_trb.parameter2); uart_print("\n");
-        uart_print("ep0 info1="); uart_print_hex(input_ctx->ctx.endpoints[0].info1); uart_print("\n");
         uart_print("ep0 info2="); uart_print_hex(input_ctx->ctx.endpoints[0].info2); uart_print("\n");
         uart_print("slot info2="); uart_print_hex(input_ctx->ctx.slot.info2); uart_print("\n");
         uart_print("Failed with Code: ");
@@ -222,6 +290,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         __asm__ __volatile__("hlt");
     }
 }
+
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
 bool XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::send_configure_endpoint_command(uint64_t input_ctx_phys) {
     // 1. Configure Endpoint Command TRB 구성 (Type 12)
@@ -474,6 +543,17 @@ void XHCIController::init() {
     uart_print("\n");
     __asm__ __volatile__("sfence" ::: "memory");
 
+    bool ok = setup_msix(pci_bus, pci_slot, pci_func, { 0x35, 0 });
+    // xHCI 자체 인터럽트 Enable은 컨트롤러마다 다르니까 여기서
+    *(volatile uint32_t*)(intr_base) |= 0x03; // IMAN
+    *usbcmd |= (1 << 2); // INTE
+    uart_print("[MSIX] IMAN=");     uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
+    uart_print("[MSIX] USBCMD=");   uart_print_hex(*usbcmd); uart_print("\n");
+    if (!ok) {
+        uart_print("[XHCI] MSI-X not supported!\n");
+        return;
+    }
+
     uint32_t max_ports = (hcsparams1 >> 24) & 0xFF;
     while (event_ring->has_event()) {
 		event_ring->pop(); // 초기 이벤트 클리어
@@ -543,19 +623,11 @@ void XHCIController::init() {
             }
         }
     }
-    bool ok = setup_msix(pci_bus, pci_slot, pci_func, { 0x35, 0 });
-    uart_print("[MSIX] IMAN=");     uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
-    uart_print("[MSIX] USBCMD=");   uart_print_hex(*usbcmd); uart_print("\n");
-    if (!ok) {
-        uart_print("[XHCI] MSI-X not supported!\n");
-        return;
-    }
-    // xHCI 자체 인터럽트 Enable은 컨트롤러마다 다르니까 여기서
-    *(volatile uint32_t*)(intr_base) |= 0x03; // IMAN
-    *usbcmd |= (1 << 2); // INTE
 }
 void XHCIController::eoi() {
-	*(volatile uint32_t*)(intr_base) |= 0x01; // IMAN IP 비트 클리어
+    event_ring->erdp(intr_base);
+    *usbsts = 0x18;
+    *(volatile uint32_t*)(intr_base) |= 0x01;
 }
 EventTRB XHCIController::execute_command(TRB cmd) {
     cmd_ring->push(cmd);
@@ -568,9 +640,8 @@ EventTRB XHCIController::execute_command(TRB cmd) {
     } while (((ev.control >> 10) & 0x3F) != 0x21);
     return ev;
 }
-extern bool booting;
 EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_id, uint32_t expected_type, uint32_t expected_ep) {
-    EventTRB ev;
+    EventTRB ev = {0,};
     int count = 0;
     uint8_t cap_length = *(volatile uint8_t*)mmio_base;
     uint64_t op_base = (uint64_t)mmio_base + cap_length;
@@ -578,7 +649,7 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
     volatile uint32_t portsc = *portsc_reg;
 	//uart_print("[XHCI] portsc="); uart_print_hex(portsc); uart_print("\n");
     if (booting) {
-        do {
+        while(1) {
             while (!event_ring->has_event()) { 
                 uart_print("\r[XHCI] USBTS="); uart_print_hex(*usbsts); uart_print("             ");
             }
@@ -588,10 +659,33 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
             *(volatile uint32_t*)(intr_base) |= 0x01;      // IMAN IP 클리어
             count++;
 			uart_print("[XHCI] Waiting for Command Completion... count="); uart_print_hex(count); uart_print("\n");
-        } while (ev.ptr != (uint64_t)ptr ||
-            ((ev.control >> 10) & 0x3F) != expected_type ||
-            ((ev.control >> 24) & 0xFF) != slot_id ||
-            (expected_ep != 0 && ((ev.control >> 16) & 0xFF) != expected_ep));
+            uart_print("[XHCI] Event: Type="); uart_print_hex((ev.control >> 10) & 0x3F);
+            uart_print(" Completion="); uart_print_hex((ev.status >> 24) & 0xFF);
+            uart_print("\n");
+            if (ev.ptr != (uint64_t)ptr ||
+                ((ev.control >> 10) & 0x3F) != expected_type ||
+                ((ev.control >> 24) & 0xFF) != slot_id ||
+                (expected_ep != 0 && ((ev.control >> 16) & 0xFF) != expected_ep)) {
+                for (int i = 0; i < xhci_event->size(); i++) {
+                    KEvent event = (*xhci_event)[i];
+                    if (event.arg[0] == ev.ptr && event.arg[1] == ((ev.control >> 24) & 0xFF) && event.arg[2] == ((ev.control >> 16) & 0xFF)) {
+                        if (event.callback != nullptr && event.callback != basic_callback)
+                            event.callback(&event, ev.status, ev.control, event.callback_ctx);
+                        uart_print("[XHCI] KEvent arg0="); uart_print_hex(event.arg[0]);
+                        uart_print(" arg1="); uart_print_hex(event.arg[1]);
+                        uart_print(" arg2="); uart_print_hex(event.arg[2]);
+                        uart_print("\n");
+                        xhci_event->erase(i);
+                        i--;
+                    }
+                }
+            }
+            else {
+				uart_print("[XHCI] Command Completed! ptr="); uart_print_hex(ev.ptr);
+                uart_print("\n");
+                break;
+            }
+        }
     }
     else {
         uint64_t result = call_xhci(ptr, (uint64_t)slot_id, (uint64_t)expected_ep);
@@ -600,9 +694,9 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
         ev.control = result & 0xFFFFFFFF;
         event_ring->erdp(intr_base);
     }
-    uart_print("transfer length remaining=");
-    uart_print_hex(ev.status & 0xFFFFFF);  // 못 받은 바이트 수
-    uart_print("\n");
+    //uart_print("transfer length remaining=");
+    //uart_print_hex(ev.status & 0xFFFFFF);  // 못 받은 바이트 수
+    //uart_print("\n");
     return ev;
 }
 uint32_t XHCIController::get_usbsts() {
@@ -614,9 +708,11 @@ void XHCIController::port_status_change(EventTRB ev) {
 void XHCIController::command_completion(EventTRB ev) {
 
 }
+static DeviceType devices[256];
 extern vector<Controller*>* controllers;
 __attribute__((interrupt))
 void xhci_handler(interrupt_frame_t* frame) {
+    //uart_print("[XHCI] handler!\n"); // 불리는지 확인
     for (int i = 0; i < controllers->size(); i++) {
         Controller* controller = (*controllers)[i];
         if (controller->get_type() != 2) continue;
@@ -624,6 +720,57 @@ void xhci_handler(interrupt_frame_t* frame) {
         while (contr->event_ring->has_event()) {
             EventTRB ev = contr->event_ring->pop();
             uint8_t type = (ev.control >> 10) & 0x3F;
+            /*
+            uart_print("[XHCI] Event TRB: Type="); uart_print_hex(type);
+            uart_print(" SlotID="); uart_print_hex((ev.control >> 24) & 0xFF);
+            uart_print(" EPID="); uart_print_hex((ev.control >> 16) & 0xFF);
+            uart_print("\n");
+            */
+            if (type == 34) {
+                contr->port_status_change(ev);
+                continue;
+            }
+            else if (type == 33) {
+                contr->command_completion(ev);
+            }
+            else if (type == 32) {
+                uint8_t slot_id = (uint8_t)(ev.control >> 24);         // 상위 8비트
+                uint8_t endpoint_id = (uint8_t)((ev.control >> 16) & 0x1F); // 16~20비트
+                /*
+                uart_print("[XHCI] Transfer Event ptr="); uart_print_hex(ev.ptr);
+                uart_print(" slot="); uart_print_hex(slot_id);
+                uart_print(" ep="); uart_print_hex(endpoint_id);
+                uart_print("\n");
+                */
+                for (int i = 0; i < xhci_event->size(); i++) {
+                    KEvent event = (*xhci_event)[i];
+                    /*
+                    uart_print("[XHCI] KEvent arg0="); uart_print_hex(event.arg[0]);
+                    uart_print(" arg1="); uart_print_hex(event.arg[1]);
+                    uart_print(" arg2="); uart_print_hex(event.arg[2]);
+                    uart_print("\n");
+                    */
+                    if (event.arg[0] == ev.ptr && event.arg[1] == slot_id && event.arg[2] == endpoint_id) {
+                        event.callback(&event, ev.status, ev.control, event.callback_ctx);
+                        xhci_event->erase(i);
+                        i--;
+                    }
+                }
+            }
+        }
+        contr->eoi();
+    }
+    lapic_eoi();
+}
+void test_xhci() {
+    for (int i = 0; i < controllers->size(); i++) {
+        Controller* controller = (*controllers)[i];
+        if (controller->get_type() != 2) continue;
+        XHCIController* contr = (XHCIController*)controller;
+        while (contr->event_ring->has_event()) {
+            EventTRB ev = contr->event_ring->pop();
+            uint8_t type = (ev.control >> 10) & 0x3F;
+            uart_print("\n");
             if (type == 34) {
                 contr->port_status_change(ev);
                 continue;
@@ -637,8 +784,7 @@ void xhci_handler(interrupt_frame_t* frame) {
                 for (int i = 0; i < xhci_event->size(); i++) {
                     KEvent event = (*xhci_event)[i];
                     if (event.arg[0] == ev.ptr && event.arg[1] == slot_id && event.arg[2] == endpoint_id) {
-                        add_process(event.process_id);
-                        ((context_t*)GetProcess(event.process_id)->kernel_stack)->rax = (uint64_t)ev.status << 32ull | ev.control;
+                        event.callback(&event, ev.status, ev.control, event.callback_ctx);
                         xhci_event->erase(i);
                         i--;
                     }
@@ -647,5 +793,4 @@ void xhci_handler(interrupt_frame_t* frame) {
         }
         contr->eoi();
     }
-    lapic_eoi();
 }
