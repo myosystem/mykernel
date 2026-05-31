@@ -524,6 +524,9 @@ uint64_t Process::fork() {
 	process_queue->enqueue(child->process_id);
 	return child->process_id;
 }
+uint64_t Process::exec(const char* path, const char* argv[]) {
+    return 0;
+}
 uint64_t process_count = 0;
 uint64_t max_process_id = 0;
 void* Process::operator new(size_t size) {

@@ -190,6 +190,7 @@ public:
     void run_process();
     void run_process(uint64_t zombie_page);
     uint64_t fork();
+	uint64_t exec(const char* path, const char* argv[]);
     
     void* operator new(size_t size);
     void operator delete(void* ptr);

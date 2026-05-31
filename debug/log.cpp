@@ -39,8 +39,19 @@ void uart_putc(char c) {
     }
     putc(bootinfo, (cursor_pos % 200) * 1 * 8 + 4, (cursor_pos / 200) * 2 * 10 + 4, c, 0, 1);
     cursor_pos++;
-	if (cursor_pos >= 200 * 1/*25*/) {
-        cursor_pos = 0; // 화면이 가득 차면 다시 처음으로
+	if ((cursor_pos / 200) * 20 + 14 > bootinfo->framebufferHeight) {
+		for (uint64_t y = 0; y < bootinfo->framebufferHeight - 20; y++) {
+			for (uint64_t x = 0; x < bootinfo->framebufferPitch; x++) {
+				((uint32_t*)(bootinfo->framebufferAddr))[y * bootinfo->framebufferPitch + x] =
+					((uint32_t*)(bootinfo->framebufferAddr))[(y + 20) * bootinfo->framebufferPitch + x];
+			}
+		}
+		for (uint64_t y = bootinfo->framebufferHeight - 20; y < bootinfo->framebufferHeight; y++) {
+			for (uint64_t x = 0; x < bootinfo->framebufferPitch; x++) {
+				((uint32_t*)(bootinfo->framebufferAddr))[y * bootinfo->framebufferPitch + x] = 0xFFFFFF;
+			}
+		}
+		cursor_pos = (bootinfo->framebufferHeight / 20 - 2) * 200; // 커서를 마지막 줄의 시작으로 이동
     }
 }
 
