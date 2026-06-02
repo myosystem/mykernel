@@ -23,7 +23,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     }
     if (now_process) {
         if (error_code & 1) { // Present인데 PF = 권한 위반
-            uint64_t pte = virt_page_allocator->get_mapping(cr2 & ~0xFFFULL);
+            uint64_t pte = virt_page_allocator->get_pte(cr2 & ~0xFFFULL);
             if (pte != ~0ULL && (pte & VirtPageAllocator::PTE_COW)) {
                 // CoW 처리
                 uint64_t pa = pte & PTE_ADDR_MASK;
