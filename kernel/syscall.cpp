@@ -69,19 +69,19 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	}
 	case 3: // getpid
 	{
-		frame->rax = now_process->process_id; // 반환값: 현재 프로세스 ID
+		frame->rax = now_process->id; // 반환값: 현재 프로세스 ID
 		break;
 	}
 	case 4: // message
 	{
 		if (frame->rdi == 0) { // send
 			msg_t* msg = (msg_t*)frame->rsi;
-			msg->sender_pid = now_process->process_id; // 보낸이 PID 자동 설정
-			msg->timestamp = 0; // 나중에 tsc꺼 넣을거임
+			msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
+			msg->timestamp = tsc_get();
 			uint64_t pid = frame->rdx;
 			bool is_block = frame->rcx; // 메시지 대기 여부
-			Process* target_process = (Process*)(PROCESS_QUEUE_BASE + (sizeof(Process) * pid));
-			if((target_process->state & 1) != 1) {
+			Process* target_process = GetProcess(pid);
+			if (target_process == nullptr) {
 				frame->rax = -1; // 반환값: 오류 (존재하지 않는 프로세스)
 				break;
 			}
@@ -102,11 +102,11 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		else if (frame->rdi == 0xFFFFFFFFFFFFFFFF) { // broadcast
 			msg_t* msg = (msg_t*)frame->rsi;
-			msg->sender_pid = now_process->process_id; // 보낸이 PID 자동 설정
-			msg->timestamp = 0; // 나중에 tsc꺼 넣을거임
+			msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
+			msg->timestamp = tsc_get();
 			for(size_t i = 0; i < get_max_process_id(); i++) {
-				Process* target_process = (Process*)(PROCESS_QUEUE_BASE + (sizeof(Process) * i));
-				if((target_process->state & 1) == 1 && target_process->process_id != now_process->process_id) {
+				Process* target_process = GetProcess(i);
+				if(target_process && target_process->id != now_process->id) {
 					target_process->msg_recv(*msg, false);
 				}
 			}
@@ -179,7 +179,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 			static uint64_t timer_id_counter = 1;
 			KEvent event;
 			event.interval = ms_to_ticks(frame->rdx);
-			event.process_id = now_process->process_id;
+			event.process_id = now_process->id;
 			event.time = tsc_get() + ms_to_ticks(frame->rsi); // 현재 시간 + 대기할 시간
 			event.type = EVENT_TYPE_TIMER;
 			event.event_id = timer_id_counter++;
@@ -227,7 +227,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		uint64_t size = frame->rdi;
 		user_shm_request* req = (user_shm_request*)frame->rsi;
-		SharedMem* shm = new SharedMem(now_process->process_id, size);
+		SharedMem* shm = new SharedMem(now_process->id, size);
 		uint64_t id = shm->get_id();
 		frame->rax = now_process->mmap(size, MMAP_READ | MMAP_WRITE | MMAP_SHARED, id); // 반환값: 매핑된 가상 주소
 		req->id = id;
@@ -290,12 +290,10 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		Process* exiting = now_process;
 		now_process = next_process();
 		exiting->~Process();
-		uint64_t zombie = exiting->kernel_stack_phys - PageSize;
 		if (exiting->parent == (uint64_t)-1) {
-			// 부모가 없는 경우, 즉시 메모리 해제
 			Process::operator delete(exiting);
 		}
-		now_process->run_process(zombie);
+		now_process->run_process();
 		break;
 	}
 	default:

@@ -7,7 +7,7 @@
 #include "util/heaptree.h"
 #include "util/vector.h"
 #include "filesys/file.h"
-
+#include "util/new.h"
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
 #define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
 #define PROCESS_QUEUE_BASE 0xFFFF818000000000ULL
@@ -152,7 +152,9 @@ typedef struct {
 } __attribute__((packed)) msg_t;
 #define MAX_MESSAGE_QUEUE_SIZE 128
 #define MAX_MESSAGE_QUEUE_INT 256
-class Process {
+void pinit(void* obj);
+void pdestroy(void* obj);
+class Process : public NewObject<PROCESS_QUEUE_BASE, 300, pinit, pdestroy> {
 private:
     queue<msg_t> msgq;
 	queue<uint64_t> waiting_msgq; // 메시지 대기 중인 프로세스들의 PID 저장
@@ -162,7 +164,6 @@ public:
     uint64_t kernel_stack_phys;
     uint64_t user_stack_bottom;
     uint64_t user_stack_top;
-    uint64_t state; // always 1
     uint64_t time_slice;
     uint64_t parent;
     VirtPageAllocator* pallocator;
@@ -172,13 +173,11 @@ public:
     uint64_t heap_top;
     uint64_t heap_bottom;
     mmap_entry* mmap_table;
-    uint64_t process_id;
     Partition* current_partition;
 	uint64_t cwd_cluster;
     pointer_vector open_files;
-    Process() {};
+    Process(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init = true);
     ~Process();
-    void init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init = true);
     void addCode(void* code_addr);
     void setHeap();
     mmap_entry* isAddrInMMap(uint64_t va) const;
@@ -188,12 +187,8 @@ public:
     bool msg_pop(msg_t* msg);
 	bool msg_empty() const;
     void run_process();
-    void run_process(uint64_t zombie_page);
     uint64_t fork();
 	uint64_t exec(const char* path, const char* argv[]);
-    
-    void* operator new(size_t size);
-    void operator delete(void* ptr);
 };
 extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 수 있도록 확장 필요
 extern HeapTree<KEvent>* time_event;

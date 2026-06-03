@@ -283,11 +283,11 @@ void HIDDevice::hid_event(void* ei, uint64_t st, uint64_t ctrl) {
         extern bool booting;
         if (!booting) {
             if (is_abs || dx != 0 || dy != 0)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_MOUSE_MOVE,     0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
-            if (pressed & 0b001) ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_MOUSE_LCLICK,   0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
-            if (pressed & 0b010) ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_MOUSE_RCLICK,   0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
-            if (released & 0b001) ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
-            if (released & 0b010) ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
+                (GetProcess(0))->msg_recv({ (-1ull), MSG_MOUSE_MOVE,     0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
+            if (pressed & 0b001) (GetProcess(0))->msg_recv({ (-1ull), MSG_MOUSE_LCLICK,   0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
+            if (pressed & 0b010) (GetProcess(0))->msg_recv({ (-1ull), MSG_MOUSE_RCLICK,   0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
+            if (released & 0b001) (GetProcess(0))->msg_recv({ (-1ull), MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
+            if (released & 0b010) (GetProcess(0))->msg_recv({ (-1ull), MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y, 0} }, false);
         }
     }
 

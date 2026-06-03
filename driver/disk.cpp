@@ -191,12 +191,8 @@ void Disk::operator delete(void* ptr) {
     p->state = 0;
 }
 int Disk::read_sector(uint64_t lba, uint32_t count, void* buf) {
-    uart_print("func name ");
-    uart_print(__PRETTY_FUNCTION__);
-    uart_print("\n");
 	return -100; // 기본 Disk는 지원 안 함
 }
 int Disk::write_sector(uint64_t lba, uint32_t count, const void* buf) {
-    uart_print("[error] write_sector\n");
     return -100; // 기본 Disk는 지원 안 함
 }

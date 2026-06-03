@@ -80,16 +80,16 @@ void mouse_handler(interrupt_frame_t* frame) {
                 if (cursor_y < 0) cursor_y = 0;
                 if (cursor_x >= (int)bootinfo->framebufferWidth) cursor_x = bootinfo->framebufferWidth - 1;
                 if (cursor_y >= (int)bootinfo->framebufferHeight) cursor_y = bootinfo->framebufferHeight - 1;
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_MOVE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
+                (GetProcess(0))->msg_recv({ (-1ull),MSG_MOUSE_MOVE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             }
             if (pressd & 0b001)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
+                (GetProcess(0))->msg_recv({ (-1ull),MSG_MOUSE_LCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             if (pressd & 0b010)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
+                (GetProcess(0))->msg_recv({ (-1ull),MSG_MOUSE_RCLICK, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             if (released & 0b001)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
+                (GetProcess(0))->msg_recv({ (-1ull),MSG_MOUSE_LRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
             if (released & 0b010)
-                ((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull),MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
+                (GetProcess(0))->msg_recv({ (-1ull),MSG_MOUSE_RRELEASE, 0, {(uint64_t)cursor_x, (uint64_t)cursor_y,0} }, false);
         }
     }
     lapic_eoi();
@@ -174,7 +174,7 @@ void general_protection_fault_handler(interrupt_frame_t* frame, uint64_t error_c
     uart_print("\nError Code=");
     uart_print_hex(error_code);
     uart_print("\nProcess id=");
-    uart_print_hex(now_process->process_id);
+    uart_print_hex(now_process->id);
     uart_print("\n");
     while (1) {
         __asm__ __volatile__("hlt");
@@ -188,7 +188,7 @@ void stack_segment_fault_handler(interrupt_frame_t* frame, uint64_t error_code) 
     uart_print("\nError Code=");
     uart_print_hex(error_code);
     uart_print("\nProcess id=");
-    uart_print_hex(now_process->process_id);
+    uart_print_hex(now_process->id);
     uart_print("\n");
     while (1) {
         __asm__ __volatile__("hlt");
@@ -320,7 +320,7 @@ extern "C" void waiting_handler(context_t* frame) {
     switch (frame->rax) {
     case 0x0:   //CPU yield
     {
-		process_queue->enqueue(now_process->process_id);
+		process_queue->enqueue(now_process->id);
         break; // 그냥 다음 프로세스로 넘어가기만 하면 됨
     }
     case 0x4:   //MSG waiting
@@ -340,7 +340,7 @@ extern "C" void waiting_handler(context_t* frame) {
     {
 		KEvent event;
 		event.interval = 0;
-		event.process_id = now_process->process_id;
+		event.process_id = now_process->id;
 		event.time = tsc_get() + ms_to_ticks(frame->rdi); // 현재 시간 + 대기할 시간
 		event.type = EVENT_TYPE_SLEEP;
         time_event->push(event);
@@ -354,7 +354,7 @@ extern "C" void waiting_handler(context_t* frame) {
         }
 		KEvent event;
 		event.interval = 0;
-		event.process_id = now_process->process_id;
+		event.process_id = now_process->id;
 		event.time = 0; // 타이머가 아니면 시간은 0으로 설정
 		event.type = 0x35;
 		event.arg[0] = frame->rdi; //

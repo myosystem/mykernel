@@ -265,7 +265,6 @@ void VirtPageAllocator::free_all_low_pages() {
     for (int i = 0; i < 256; i++) {
         uint64_t* pml4e = (uint64_t*)pml4 + i;
         if (*pml4e & P) {
-            // [수정] 마스크 적용
             uint64_t next_table_phys = *pml4e & PTE_ADDR_MASK;
 
             uint64_t* pdpte_base = (uint64_t*)(HHDM_BASE + next_table_phys);

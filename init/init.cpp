@@ -93,7 +93,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 		volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
         *pml4_entry_addr = 0;
     }
-	idle_process = ::new (idle_process_buf) Process();
+	idle_process = (Process*)::operator new (sizeof(Process), idle_process_buf);
 	idle_process->cr3 = virt_page_allocator->getCr3() + HHDM_BASE;
 	idle_process->state = 1;
     idle_process->code_va_base = (uint64_t)idle_process_func;
@@ -103,7 +103,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	idle_process->user_stack_top = (uint64_t)idle_process->kernel_stack;
 	idle_process->pallocator = virt_page_allocator; // 재사용
     idle_process->time_slice = 10;
-	idle_process->process_id = IDLE_PROCESS_PID; // idle 프로세스는 고유한 ID가 없음
+	idle_process->id = IDLE_PROCESS_PID; // idle 프로세스는 고유한 ID가 없음
     *(--idle_process->kernel_stack) = 0x10;
     *(--idle_process->kernel_stack) = idle_process->user_stack_bottom;
     *(--idle_process->kernel_stack) = 0x202; // rflags
@@ -180,28 +180,26 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     File* test_file = kernel_open_file("#0/TEST.O");
 
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
-    Process* display = new Process();
-    display->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_file_id());
+    Process* display = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_file_id());
     while (display_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         display->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
     display->setHeap();
-    now_process = display;
     delete display_file;
-	//add_process(display->process_id);
+	add_process(display->id);
     
-    Process* test = new Process();
-    test->init(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
+    Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         test->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
     test->setHeap();
     delete test_file;
-    add_process(test->process_id);
+    add_process(test->id);
     
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);
     uart_print("\ntest\n");
 	lapic_tsc_deadline_set_ms(10);
     booting = false;
-    display->run_process();
+    now_process = next_process();
+    now_process->run_process();
 }

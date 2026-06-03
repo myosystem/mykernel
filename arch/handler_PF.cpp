@@ -98,7 +98,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     uart_print_hex(error_code);
     __asm__ __volatile__("hlt");
     uart_print("\nProcess id=");
-    uart_print_hex(now_process->process_id);
+    uart_print_hex(now_process->id);
     uart_print("\n");
     char raw_stack[16];
     memcpy(raw_stack, (void*)&cr2, 8);

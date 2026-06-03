@@ -9,9 +9,6 @@ void XHCIDisk::init() {
 }
 
 int XHCIDisk::read_sector(uint64_t lba, uint32_t count, void* buf) {
-    uart_print("func name ");
-    uart_print(__PRETTY_FUNCTION__);
-    uart_print("\n");
     uint8_t cmd[10] = { 0 };
     cmd[0] = 0x28;
     cmd[2] = (lba >> 24) & 0xFF;
