@@ -171,14 +171,41 @@ void* pci_init() {
     return (void*)(abar.addr + MMIO_BASE);
 }
 bool setup_msix(uint16_t bus, uint16_t slot, uint16_t func, MSIXConfig cfg) {
+    uint16_t status = pci_read16(bus, slot, func, 0x06);
+    if (!(status & (1 << 4))) {
+		uart_print("Device at bus=");
+		uart_print_hex(bus);
+		uart_print(", slot=");
+		uart_print_hex(slot);
+		uart_print(", func=");
+		uart_print_hex(func);
+		uart_print(" does not have MSI-X capability\n");
+		return false;
+    }
     // 1. MSI-X Capability 찾기
     uint8_t cap_ptr = pci_read8(bus, slot, func, 0x34);
+    uart_print("[CAP] initial cap_ptr="); uart_print_hex(cap_ptr); uart_print("\n");
+
     while (cap_ptr) {
         uint8_t cap_id = pci_read8(bus, slot, func, cap_ptr);
+        uint8_t next = pci_read8(bus, slot, func, cap_ptr + 1);
+        uart_print("[CAP] ptr="); uart_print_hex(cap_ptr);
+        uart_print(" id=");       uart_print_hex(cap_id);
+        uart_print(" next=");     uart_print_hex(next);
+        uart_print("\n");
         if (cap_id == 0x11) break;
-        cap_ptr = pci_read8(bus, slot, func, cap_ptr + 1);
+        cap_ptr = next;
     }
-    if (!cap_ptr) return false;
+    if (!cap_ptr) {
+		uart_print("MSI-X Capability not found for device at bus=");
+		uart_print_hex(bus);
+		uart_print(", slot=");
+		uart_print_hex(slot);
+		uart_print(", func=");
+		uart_print_hex(func);
+		uart_print("\n");
+        return false;
+    }
 
     // 2. 테이블 위치 파악
     uint32_t table_info = pci_read32(bus, slot, func, cap_ptr + 0x04);
@@ -220,5 +247,59 @@ bool setup_msix(uint16_t bus, uint16_t slot, uint16_t func, MSIXConfig cfg) {
     uart_print("[MSIX] table[0]="); uart_print_hex(msix_table[0]); uart_print("\n");
     uart_print("[MSIX] table[2]="); uart_print_hex(msix_table[2]); uart_print("\n");
     uart_print("[MSIX] msgctl=");   uart_print_hex(pci_read16(bus, slot, func, cap_ptr + 0x02)); uart_print("\n");
+    return true;
+}
+bool setup_msi(uint16_t bus, uint16_t slot, uint16_t func, MSIConfig cfg) {
+    // 1. Capability List 있는지 확인
+    uint16_t status = pci_read16(bus, slot, func, 0x06);
+    if (!(status & (1 << 4))) {
+        uart_print("[MSI] No Capability List\n");
+        return false;
+    }
+
+    // 2. MSI Capability (0x05) 찾기
+    uint8_t cap_ptr = pci_read8(bus, slot, func, 0x34);
+    while (cap_ptr) {
+        uint8_t cap_id = pci_read8(bus, slot, func, cap_ptr);
+        uint8_t next = pci_read8(bus, slot, func, cap_ptr + 1);
+        uart_print("[CAP] ptr="); uart_print_hex(cap_ptr);
+        uart_print(" id=");       uart_print_hex(cap_id);
+        uart_print(" next=");     uart_print_hex(next);
+        uart_print("\n");
+        if (cap_id == 0x05) break;
+        cap_ptr = next;
+    }
+    if (!cap_ptr) {
+        uart_print("[MSI] MSI Capability not found\n");
+        return false;
+    }
+
+    // 3. Message Control 읽기
+    uint16_t msgctl = pci_read16(bus, slot, func, cap_ptr + 0x02);
+    bool is64 = (msgctl >> 7) & 0x1;
+    uart_print("[MSI] msgctl="); uart_print_hex(msgctl);
+    uart_print(" is64=");        uart_print_hex(is64);
+    uart_print("\n");
+
+    // 4. Address / Data 세팅
+    uint32_t addr_low = 0xFEE00000 | (cfg.lapic_id << 12);
+    pci_write32(bus, slot, func, cap_ptr + 0x04, addr_low);
+
+    if (is64) {
+        pci_write32(bus, slot, func, cap_ptr + 0x08, 0x00000000); // addr high
+        pci_write16(bus, slot, func, cap_ptr + 0x0C, cfg.vector); // data
+    }
+    else {
+        pci_write16(bus, slot, func, cap_ptr + 0x08, cfg.vector); // data
+    }
+
+    // 5. Multiple Message Enable=0 (벡터 1개), MSI Enable=1
+    msgctl &= ~(0x7 << 4); // MME 클리어
+    msgctl |= (0x1 << 0); // MSI Enable
+    pci_write16(bus, slot, func, cap_ptr + 0x02, msgctl);
+
+    uart_print("[MSI] addr_low="); uart_print_hex(addr_low);  uart_print("\n");
+    uart_print("[MSI] vector=");   uart_print_hex(cfg.vector); uart_print("\n");
+    uart_print("[MSI] msgctl=");   uart_print_hex(pci_read16(bus, slot, func, cap_ptr + 0x02)); uart_print("\n");
     return true;
 }

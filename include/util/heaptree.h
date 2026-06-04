@@ -42,8 +42,7 @@ class HeapTree {
 		}
 	}
 public:
-	HeapTree(void* arr) : size(0) {
-		data = (T*)arr;
+	HeapTree(void* arr) : data((T*)arr), size(0) {
 	}
 	~HeapTree() {
 	}

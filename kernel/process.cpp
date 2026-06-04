@@ -2,7 +2,6 @@
 #include "util/memory.h"
 #include "util/util.h"
 #include "debug/log.h"
-#include "arch/idt.h"
 #define PHYS_TO_HHDM(pa) ((void *)((uint64_t)(pa) + HHDM_BASE))
 // todo - GPT를 코어마다 따로 둘 수 있도록 나중에 페이지기반으로 코어개수만큼 생성해줘야함
 alignas(16) static uint8_t gdt[128];
@@ -109,43 +108,78 @@ vector<KEvent>* xhci_event;
 uint8_t* xhci_event_buf[sizeof(vector<KEvent>)];
 
 Process* now_process = 0;
-void Process::init(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init) {
+
+void pinit(void* obj) {
+	Process* process = (Process*)obj;
+    // 한 번만
+    process->pallocator = new (process->allocator_buffer) VirtPageAllocator();
+    process->cr3 = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
+    process->kernel_stack_phys = phy_page_allocator->alloc_phy_page() + PageSize;
+    process->mmap_table = nullptr;
+
+    uint64_t lcr3 = virt_page_allocator->getCr3() + HHDM_BASE;
+    memset((void*)(process->cr3), 0, PageSize / 2);                              // 하위 절반 초기화
+    memcpy((void*)(process->cr3 + 256ull * 8), (void*)(lcr3 + 256ull * 8), 256ull * 8); // 커널 공간 복사
+    process->pallocator->init(phy_page_allocator, process->cr3);
+}
+Process::Process(uint64_t cs, uint64_t ss, Partition* partition,
+    uint64_t cwd_cluster, bool full_init) {
+
     code_va_base = 0x400000;
     time_slice = 100;
-    pallocator = new (allocator_buffer) VirtPageAllocator();
-    cr3 = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
-    uint64_t lcr3 = virt_page_allocator->getCr3() + HHDM_BASE;
-    memset((void*)(cr3), 0, PageSize / 2); // f
-    memcpy((void*)(cr3 + 256ull * 8), (void*)(lcr3 + 256ull * 8), 256ull * 8);
-    pallocator->init(phy_page_allocator, cr3);
     user_stack_bottom = 0x00007FFFFFF000;
     user_stack_top = user_stack_bottom - PageSize * 4;
-    kernel_stack_phys = phy_page_allocator->alloc_phy_page() + PageSize;
+
     kernel_stack = (uint64_t*)(kernel_stack_phys + HHDM_BASE);
     *(--kernel_stack) = ss;
     *(--kernel_stack) = user_stack_bottom;
-    *(--kernel_stack) = 0x202; // rflags
-    *(--kernel_stack) = cs;  // cs
-    *(--kernel_stack) = (uint64_t)code_va_base; // rip
-	mmap_table = nullptr;
-	current_partition = partition;
-	this->cwd_cluster = cwd_cluster;
-    for (int i = 0; i < 15; i++) {
-        *(--kernel_stack) = 0;
-    }
-    for (int i = 0; i < 4; i++) {
-        *(--kernel_stack) = ss;
-    }
+    *(--kernel_stack) = 0x202;
+    *(--kernel_stack) = cs;
+    *(--kernel_stack) = (uint64_t)code_va_base;
+    for (int i = 0; i < 15; i++) *(--kernel_stack) = 0;
+    for (int i = 0; i < 4; i++) *(--kernel_stack) = ss;
+
+    current_partition = partition;
+    this->cwd_cluster = cwd_cluster;
     state = 1;
-    parent = 0;
+    parent = -1ull;
+
     if (full_init) {
-        File* stdin = new STDIn();
-        File* stdout = new STDOut();
-        File* stderr = new STDOut();
-        open_files.push_back(stdin);
-        open_files.push_back(stdout);
-        open_files.push_back(stderr);
+        open_files.push_back(new STDIn());
+        open_files.push_back(new STDOut());
+        open_files.push_back(new STDOut());
     }
+}
+Process::~Process() {
+    for (size_t i = 0; i < open_files.get_size(); i++)
+        ((File*)open_files[i])->close();
+
+    pallocator->free_all_low_pages(); // 하위 날리면 cr3 하위도 깨끗해짐
+
+    mmap_entry* entry = mmap_table;
+    while (entry) {
+        mmap_entry* next = entry->next;
+        delete entry;
+        entry = next;
+    }
+    mmap_table = nullptr;
+
+    for (uint64_t i = 0; i < children.size(); i++) {
+        Process* child = GetProcess(children[i]);
+        if (child->parent == id) {
+            child->parent = (uint64_t)-1;
+            if (child->state & PROCESS_STATE_ZOMBIE)
+                operator delete(child);
+        }
+    }
+
+    state |= PROCESS_STATE_ZOMBIE;
+}
+
+void pdestroy(void* obj) {
+    Process* process = (Process*)obj;
+    phy_page_allocator->put_page(process->cr3 - HHDM_BASE);
+    phy_page_allocator->put_page(process->kernel_stack_phys - PageSize - HHDM_BASE);
 }
 void Process::addCode(void* code_addr) {
     uint64_t code = phy_page_allocator->alloc_phy_page();
@@ -169,11 +203,8 @@ void add_process(size_t index) {
     process_queue->enqueue(index);
 }
 Process* GetProcess(size_t index) {
-    Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
-    if ((result->state & 0b1) == 0) {
-		return idle_process; // 할당되지 않은 프로세스는 idle 반환
-    }
-    return result;
+    Process* result = (Process*)Process::get(index);
+    return result == nullptr ? idle_process : result;
 }
 Process* next_process() {
 	if (process_queue->isEmpty()) return idle_process;
@@ -181,14 +212,12 @@ Process* next_process() {
     if (index > get_max_process_id()) {
 		return next_process(); // 범위 초과된 PID는 건너뛰기
     }
-    Process* result = ((Process*)PROCESS_QUEUE_BASE) + index;
+	Process* result = GetProcess(index);
+	if (result == nullptr) {
+		return next_process(); // 존재하지 않는 프로세스는 건너뛰기
+    }
     if ((result->state & 0b1) == 0) {
 		return next_process(); // 할당되지 않은 프로세스는 건너뛰기
-    }
-    if (result->process_id == 2) {
-		uart_print("\nNext process PID 2 selected\n");
-		uart_print("RIP : "); uart_print_hex(((context_t*)result->kernel_stack)->rip);
-        uart_print("\n");
     }
     return result;
 }
@@ -199,7 +228,7 @@ void Process::run_process() {
     tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
     uint64_t now_rsp = (uint64_t)this->kernel_stack;
 	//uart_print("\nSwitching to process PID ");
-	//uart_print(this->process_id);
+	//uart_print(this->id);
     //uart_print("\nvirt:");
 	//uart_print_hex((uint64_t)&virt_page_allocator);
     /*
@@ -249,48 +278,6 @@ void Process::run_process() {
         :
         : [now_rsp]"a"(now_rsp)
     );
-    __builtin_unreachable();
-}
-__attribute__((noreturn))
-void Process::run_process(uint64_t zombie_page) {
-    tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
-    uint64_t now_rsp = (uint64_t)this->kernel_stack;
-    virt_page_allocator = this->pallocator;
-    virt_page_allocator->setCr3();
-    __asm__ __volatile__(
-        "mov rsp, %[now_rsp]\n\t"
-        :
-    : [now_rsp] "a"(now_rsp)
-        );
-	phy_page_allocator->put_page(zombie_page);
-    __asm__ __volatile__(
-        "pop rax\n\t"
-        "mov gs, ax\n\t"
-        "pop rax\n\t"
-        "mov fs, ax\n\t"
-        "pop rax\n\t"
-        "mov es, ax\n\t"
-        "pop rax\n\t"
-        "mov ds, ax\n\t"
-        "pop r15\n\t"
-        "pop r14\n\t"
-        "pop r13\n\t"
-        "pop r12\n\t"
-        "pop r11\n\t"
-        "pop r10\n\t"
-        "pop r9\n\t"
-        "pop r8\n\t"
-        "pop rbp\n\t"
-        "pop rdi\n\t"
-        "pop rsi\n\t"
-        "pop rdx\n\t"
-        "pop rcx\n\t"
-        "pop rbx\n\t"
-        "pop rax\n\t"
-        "iretq\n\t"
-        :
-    :
-        );
     __builtin_unreachable();
 }
 mmap_entry* Process::isAddrInMMap(uint64_t va) const {
@@ -409,7 +396,7 @@ void Process::msg_recv(msg_t msg,bool blocking) {
     if (state & PROCESS_STATE_MSGWAIT) {
         state &= ~PROCESS_STATE_MSGWAIT; // 메시지 대기 상태 해제
         state &= ~PROCESS_STATE_WAITING; // 대기 상태 해제
-        add_process(process_id); // 프로세스 스케줄링 큐에 추가
+        add_process(id); // 프로세스 스케줄링 큐에 추가
     }
     if (msg.type == MSG_MOUSE_MOVE) {
         msg_t* last = msgq.peek_back();
@@ -440,37 +427,8 @@ bool Process::msg_pop(msg_t* msg) {
 bool Process::msg_empty() const {
     return msgq.isEmpty();
 }
-Process::~Process() {
-    // 열린 파일 닫기
-    for (size_t i = 0; i < open_files.get_size(); i++) {
-        File* f = (File*)open_files[i];
-        f->close();
-    }
-    // 페이지 테이블 해제
-    pallocator->free_all_low_pages();
-    // mmap 엔트리 해제
-    mmap_entry* entry = mmap_table;
-    while (entry) {
-        mmap_entry* next = entry->next;
-        delete entry;
-        entry = next;
-    }
-	for (uint64_t i = 0; i < children.size(); i++) {
-        Process* child = GetProcess(children[i]);
-        if (child->parent == process_id) {
-			child->parent = (uint64_t)-1; // 부모를 idle로 설정
-			if (child->state & PROCESS_STATE_ZOMBIE) {
-				operator delete (child); // 좀비 상태인 자식은 즉시 해제
-            }
-        }
-    }
-	state |= PROCESS_STATE_ZOMBIE; // 좀비 상태로 표시
-    // CR3 페이지 해제
-    phy_page_allocator->put_page(cr3 - HHDM_BASE);
-}
 uint64_t Process::fork() {
-    Process* child = new Process();
-    child->init(0x1B, 0x23, this->current_partition, this->cwd_cluster, false);
+    Process* child = new Process(0x1B, 0x23, this->current_partition, this->cwd_cluster, false);
     memcpy(child->kernel_stack, this->kernel_stack, sizeof(context_t));
     ((context_t*)child->kernel_stack)->rax = 0; // 자식 프로세스에서는 fork의 반환값이 0
 	((context_t*)child->kernel_stack)->rip = ((context_t*)this->kernel_stack)->rip; // 실행 위치는 부모와 동일
@@ -519,52 +477,63 @@ uint64_t Process::fork() {
         f->open();
 		child->open_files.push_back(f); // 열린 파일 포인터 공유 (참조 카운트 증가)
     }
-	child->parent = this->process_id;
-    this->children.push_back(child->process_id);
-	process_queue->enqueue(child->process_id);
-	return child->process_id;
+	child->parent = this->id;
+    this->children.push_back(child->id);
+	process_queue->enqueue(child->id);
+	return child->id;
 }
-uint64_t process_count = 0;
-uint64_t max_process_id = 0;
-void* Process::operator new(size_t size) {
-	Process* result = (Process*)PROCESS_QUEUE_BASE;
-	uint64_t index = 0;
-    while (result->state == 1) {
-        result++;
-		index++;
+uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
+    File* file = vfs_open(path, current_partition, cwd_cluster);
+    if (file == nullptr) {
+        return ~0ULL; // 파일 열기 실패 시 -1 반환
     }
-	result->state = 1;
-	result->process_id = index;
-	if (index > max_process_id) {
-        max_process_id = index;
+    // 1. 유저 공간 날리기
+    pallocator->free_all_low_pages();
+
+    // 2. 새 바이너리 로딩
+    code_va_base = 0x400000;
+    time_slice = 100;
+    user_stack_bottom = 0x00007FFFFFF000;
+    user_stack_top = user_stack_bottom - PageSize * 4;
+
+    current_partition = file->get_partition();
+    this->cwd_cluster = file->get_file_id();
+    state = 1;
+    uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
+    while (file->read((void*)readbuffer, PageSize) != 0) {
+        addCode((void*)readbuffer);
     }
-	process_count++;
-	uart_print("Process created with PID ");
-	uart_print(index);
-	uart_print("\nAddr ");
-	uart_print_hex((uint64_t)result);
-	uart_print("\n");
-    return result;
-}
-void Process::operator delete(void* ptr) {
-    Process* p = (Process*)ptr;
-    p->state = 0;
-	if (p->process_id == max_process_id) {
-        while (max_process_id > 0) {
-            Process* temp = (Process*)(PROCESS_QUEUE_BASE) + max_process_id;
-            if (temp->state & 0b1) {
-                break;
-            }
-            max_process_id--;
-        }
-    }
-	process_count--;
+    phy_page_allocator->put_page(readbuffer - HHDM_BASE);
+    delete file;
+
+    // 3. 힙 리셋
+    setHeap();
+
+    // 4. open_files 정리 (stdin/stdout/stderr 유지)
+	while (open_files.get_size() > 3) {
+		File* f = (File*)open_files[3];
+		f->close();
+		open_files.erase(3);
+	}
+
+    // 5. 커널 스택 프레임 리셋
+    memset((void*)ctx, 0, sizeof(context_t));
+	ctx->rip = 0x400000; // 새 코드의 시작 주소
+	ctx->rsp = user_stack_top; // 새 사용자 스택의 시작 주소
+	ctx->rflags = 0x202; // 인터럽트 허용
+    ctx->cs = 0x1B; // 사용자 코드 세그먼트
+	ctx->ss = 0x23; // 사용자 데이터 세그먼트
+    ctx->fs = ctx->ss;
+	ctx->gs = ctx->ss;
+	ctx->ds = ctx->ss;
+	ctx->es = ctx->ss;
+	return 0; // exec 성공 시 0 반환
 }
 uint64_t get_process_count() {
-    return process_count;
+    return Process::get_count();
 }
 uint64_t get_max_process_id() {
-    return max_process_id;
+    return Process::max();
 }
 __attribute__((naked))
 void idle_process_func() {   // 최대한 메모리를 안먹기 위해 

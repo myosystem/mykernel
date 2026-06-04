@@ -26,5 +26,10 @@ struct MSIXConfig {
     uint8_t  vector;      // IDT 벡터 번호
     uint8_t  lapic_id;    // 어느 CPU (BSP=0)
 };
+struct MSIConfig {
+    uint8_t vector;
+    uint8_t lapic_id;
+};
 bool setup_msix(uint16_t bus, uint16_t slot, uint16_t func, MSIXConfig cfg);
+bool setup_msi(uint16_t bus, uint16_t slot, uint16_t func, MSIConfig cfg);
 #endif /* __PCI_H__ */

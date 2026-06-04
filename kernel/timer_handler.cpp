@@ -13,7 +13,7 @@ extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame)
     }
     if (!tsc_available) fake_tsc = fake_deadline;
 	if (next_process_time == 0 || next_process_time <= tsc_get()) {  // 첫 타이머는 무조건 프로세스 스케줄링
-        add_process(now_process->process_id);
+        add_process(now_process->id);
         now_process = next_process();
         uint64_t nowtime = tsc_get();
 		next_process_time = nowtime + ms_to_ticks(now_process->time_slice);

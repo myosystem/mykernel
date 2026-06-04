@@ -10,7 +10,7 @@ void key_press(uint32_t key) {
 	
 	if (key < sizeof(keystate)) {
 		if (!(keystate[key] & 0b1)) {
-			((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_KEY_PRESS,0,{(uint64_t)key,0ull,0ull} }, false);
+			(GetProcess(0))->msg_recv({ (-1ull), MSG_KEY_PRESS,0,{(uint64_t)key,0ull,0ull} }, false);
 			keystate[key] |= 0b1;
 		}
 	}
@@ -18,7 +18,7 @@ void key_press(uint32_t key) {
 void key_release(uint32_t key) {
 	if (key < sizeof(keystate)) {
 		if (keystate[key] & 0b1) {
-			((Process*)PROCESS_QUEUE_BASE)->msg_recv({ (-1ull), MSG_KEY_RELEASE,0,{(uint64_t)key,0ull,0ull} }, false);
+			(GetProcess(0))->msg_recv({ (-1ull), MSG_KEY_RELEASE,0,{(uint64_t)key,0ull,0ull} }, false);
 			keystate[key] &= ~0b1;
 		}
 	}
