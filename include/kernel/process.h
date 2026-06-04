@@ -8,6 +8,7 @@
 #include "util/vector.h"
 #include "filesys/file.h"
 #include "util/new.h"
+#include "arch/idt.h"
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
 #define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
 #define PROCESS_QUEUE_BASE 0xFFFF818000000000ULL
@@ -188,7 +189,7 @@ public:
 	bool msg_empty() const;
     void run_process();
     uint64_t fork();
-	uint64_t exec(const char* path, const char* argv[]);
+	uint64_t exec(const char* path, const char* argv[], context_t* ctx);
 };
 extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 수 있도록 확장 필요
 extern HeapTree<KEvent>* time_event;

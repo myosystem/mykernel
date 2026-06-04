@@ -2,7 +2,7 @@
 #define __NEW_H__
 #include "util/size.h"
 #include "mm/allocator"
-#define SLAB_NEW
+//#define SLAB_NEW
 #ifdef SLAB_NEW
 template<uint64_t based_addr, uint64_t size, void(*init)(void*), void(*destroy)(void*)>
 class NewObject {
@@ -152,22 +152,20 @@ private:
 	inline static uint64_t count = 0;
 	inline static uint64_t biggest = 0;
 protected:
-	NewObject() {
-
-	}
+	NewObject() {}
 	~NewObject() {}
 public:
 	void* operator new(size_t) {
 		uint64_t result = based_addr;
 		uint64_t index = 0;
-		while (((NewObject*)result)->state == 1) {		// Todo 흠 이거 너무 느린데 heap tree로 빈거 저장해볼까
-			result+=size;
+		while (((NewObject*)result)->state == 1) {
+			result += size;
 			index++;
 		}
 		((NewObject*)result)->state = 1;
 		((NewObject*)result)->id = index;
 		if (index >= biggest) {
-			biggest = index;
+			biggest = index + 1; // biggest = 지금까지 쓴 최대 슬롯 수
 			init((void*)result);
 		}
 		count++;
@@ -176,30 +174,25 @@ public:
 	void operator delete(void* ptr) {
 		NewObject* p = (NewObject*)ptr;
 		p->state = 0;
-		if (p->id == biggest) {
+		if (p->id == biggest - 1) {
 			while (biggest > 0) {
-				NewObject* temp = (NewObject*)(based_addr)+biggest;
-				if (temp->state & 0b1) {
-					break;
-				}
+				NewObject* temp = (NewObject*)(based_addr)+biggest - 1;
+				if (temp->state & 0b1) break;
 				biggest--;
 			}
 		}
 		count--;
 	}
 	static void* get(uint64_t index) {
-		if (virt_page_allocator->get_pa((based_addr + index * size) & ~0xFFFULL) == ~0ULL) {
-			return nullptr; // 아직 할당되지 않은 인덱스
-		}
-		else if (((NewObject*)(based_addr + index * size))->state == 0) {
-			return nullptr; // 할당은 되었지만 아직 사용되지 않은 인덱스
-		}
+		if (virt_page_allocator->get_pa((based_addr + index * size) & ~0xFFFULL) == ~0ULL)
+			return nullptr;
+		if (((NewObject*)(based_addr + index * size))->state == 0)
+			return nullptr;
 		return (void*)(based_addr + index * size);
 	}
-	static uint64_t max() {
-		return biggest;
-	}
-	uint64_t state; // 0 = free, 1 = used 나머지 비트는 자유롭게 사용 가능
+	static uint64_t max() { return biggest; }
+	static uint64_t get_count() { return count; }
+	uint64_t state;
 	uint64_t id;
 };
 #endif

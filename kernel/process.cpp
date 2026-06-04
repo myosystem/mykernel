@@ -2,7 +2,6 @@
 #include "util/memory.h"
 #include "util/util.h"
 #include "debug/log.h"
-#include "arch/idt.h"
 #define PHYS_TO_HHDM(pa) ((void *)((uint64_t)(pa) + HHDM_BASE))
 // todo - GPT를 코어마다 따로 둘 수 있도록 나중에 페이지기반으로 코어개수만큼 생성해줘야함
 alignas(16) static uint8_t gdt[128];
@@ -483,8 +482,52 @@ uint64_t Process::fork() {
 	process_queue->enqueue(child->id);
 	return child->id;
 }
-uint64_t Process::exec(const char* path, const char* argv[]) {
-    return 0;
+uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
+    File* file = vfs_open(path, current_partition, cwd_cluster);
+    if (file == nullptr) {
+        return ~0ULL; // 파일 열기 실패 시 -1 반환
+    }
+    // 1. 유저 공간 날리기
+    pallocator->free_all_low_pages();
+
+    // 2. 새 바이너리 로딩
+    code_va_base = 0x400000;
+    time_slice = 100;
+    user_stack_bottom = 0x00007FFFFFF000;
+    user_stack_top = user_stack_bottom - PageSize * 4;
+
+    current_partition = file->get_partition();
+    this->cwd_cluster = file->get_file_id();
+    state = 1;
+    uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
+    while (file->read((void*)readbuffer, PageSize) != 0) {
+        addCode((void*)readbuffer);
+    }
+    phy_page_allocator->put_page(readbuffer - HHDM_BASE);
+    delete file;
+
+    // 3. 힙 리셋
+    setHeap();
+
+    // 4. open_files 정리 (stdin/stdout/stderr 유지)
+	while (open_files.get_size() > 3) {
+		File* f = (File*)open_files[3];
+		f->close();
+		open_files.erase(3);
+	}
+
+    // 5. 커널 스택 프레임 리셋
+    memset((void*)ctx, 0, sizeof(context_t));
+	ctx->rip = 0x400000; // 새 코드의 시작 주소
+	ctx->rsp = user_stack_top; // 새 사용자 스택의 시작 주소
+	ctx->rflags = 0x202; // 인터럽트 허용
+    ctx->cs = 0x1B; // 사용자 코드 세그먼트
+	ctx->ss = 0x23; // 사용자 데이터 세그먼트
+    ctx->fs = ctx->ss;
+	ctx->gs = ctx->ss;
+	ctx->ds = ctx->ss;
+	ctx->es = ctx->ss;
+	return 0; // exec 성공 시 0 반환
 }
 uint64_t get_process_count() {
     return Process::get_count();

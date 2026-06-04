@@ -266,6 +266,13 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		frame->rax = now_process->fork();
 		break;
 	}
+	case 31: // exec
+	{
+		const char* path = (const char*)frame->rdi;
+		const char** argv = (const char**)frame->rsi;
+		now_process->exec(path, argv, frame); // 반환값: 성공하면 0, 실패하면 -1
+		break;
+	}
 	case 45: // brk
 	{
 		uint64_t new_heap_bottom = frame->rdi;

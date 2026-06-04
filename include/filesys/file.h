@@ -35,6 +35,7 @@ public:
 	void operator delete(void* ptr);
 	static File* get(uint64_t index);
 	uint64_t get_file_id() const { return file_id; }
+	Partition* get_partition() const { return partition; }
 };
 class STDIn : public File {
 	public:
