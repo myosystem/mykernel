@@ -16,6 +16,7 @@
 #define PROCESS_STATE_WAITING   0b10
 #define PROCESS_STATE_MSGWAIT   0b100
 #define PROCESS_STATE_ZOMBIE    0b1000
+#define PROCESS_STATE_CHILD_WAIT 0b10000
 struct TSS64 {
     uint32_t reserved0;
     uint64_t rsp0;
@@ -188,11 +189,8 @@ public:
     bool msg_pop(msg_t* msg);
 	bool msg_empty() const;
     void run_process();
-    void run_process(uint64_t zombie_page);
     uint64_t fork();
-    
-    void* operator new(size_t size);
-    void operator delete(void* ptr);
+	uint64_t exec(const char* path, const char* argv[], context_t* ctx);
 };
 extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 수 있도록 확장 필요
 extern HeapTree<KEvent>* time_event;

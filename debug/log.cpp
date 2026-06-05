@@ -26,11 +26,7 @@ int uart_is_transmit_empty() {
 void uart_putc(char c) {
     while (!uart_is_transmit_empty());
     outb(COM1, c);
-	//console[cursor_pos++ % (200 * 80)] = c; // 콘솔 버퍼에 저장
-    //for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
-    //    uint32_t PixelColor = 0xFFFFFF;
-    //    *((uint32_t*)(bootinfo->framebufferAddr) + i) = PixelColor;
-    //}
+#ifdef LOG_TO_FRAMEBUFFER
     if (c == '\r') {
         cursor_pos -= (cursor_pos % 200); // 커서를 현재 줄의 시작으로 이동
     }
@@ -42,6 +38,7 @@ void uart_putc(char c) {
 	if (cursor_pos >= 200 * 1/*25*/) {
         cursor_pos = 0; // 화면이 가득 차면 다시 처음으로
     }
+#endif
 }
 
 void uart_print(const char* s) {
