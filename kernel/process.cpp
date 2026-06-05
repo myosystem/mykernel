@@ -174,11 +174,6 @@ Process::~Process() {
     }
 
     state |= PROCESS_STATE_ZOMBIE;
-	Process* parent_process = GetProcess(parent);
-    if(parent_process->state & PROCESS_STATE_CHILD_WAIT) {
-        parent_process->state &= ~PROCESS_STATE_CHILD_WAIT;
-		((context_t*)parent_process->kernel_stack)->rax = id; // wait에서 반환값으로 자식 PID 전달
-    }
 }
 
 void pdestroy(void* obj) {
@@ -432,11 +427,11 @@ bool Process::msg_pop(msg_t* msg) {
 bool Process::msg_empty() const {
     return msgq.isEmpty();
 }
-uint64_t Process::fork(context_t* ctx) {
+uint64_t Process::fork() {
     Process* child = new Process(0x1B, 0x23, this->current_partition, this->cwd_cluster, false);
-    memcpy(child->kernel_stack, ctx, sizeof(context_t));
+    memcpy(child->kernel_stack, this->kernel_stack, sizeof(context_t));
     ((context_t*)child->kernel_stack)->rax = 0; // 자식 프로세스에서는 fork의 반환값이 0
-	((context_t*)child->kernel_stack)->rip = ctx->rip; // 실행 위치는 부모와 동일
+	((context_t*)child->kernel_stack)->rip = ((context_t*)this->kernel_stack)->rip; // 실행 위치는 부모와 동일
     if (!child->pallocator->copy(*pallocator, 0x400000, code_va_base - 0x400000)) { // 코드 복사
         delete child;
 		return ~0ULL; // 복사 실패 시 -1 반환
@@ -533,30 +528,6 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
 	ctx->ds = ctx->ss;
 	ctx->es = ctx->ss;
 	return 0; // exec 성공 시 0 반환
-}
-uint64_t Process::wait() {
-	for (uint64_t i = 0; i < children.size(); i++) {
-		Process* child = GetProcess(children[i]);
-		if (child->state & PROCESS_STATE_ZOMBIE) {
-			uint64_t result = child->time_slice; // 임시로 time_slice에 종료 코드를 저장
-			operator delete(child);
-			children.erase(i);
-			return result;
-		}
-	}
-    Process* child = GetProcess(child_zombie_wait());
-    if (child) {
-        uint64_t result = child->time_slice;
-        operator delete(child);
-        for(uint64_t i = 0; i < children.size(); i++) {
-            if (children[i] == child->id) {
-                children.erase(i);
-                break;
-            }
-        }
-        return result;
-    }
-    return ~0ULL; // 오류 시 -1 반환
 }
 uint64_t get_process_count() {
     return Process::get_count();

@@ -190,7 +190,7 @@ bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t
 	uint64_t pages = (size + 4095) / 4096;
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t va = start + i * PageSize;
-		uint64_t pte = source.get_mapping(va);
+		uint64_t pte = source.get_pte(va);
 		if (pte != ~0ULL) {
 			uint64_t pa = pte & PTE_ADDR_MASK;
 			uint64_t flags = pte & ~PTE_ADDR_MASK;
@@ -236,99 +236,118 @@ void free_pt(VirtPageAllocator* virt, uint64_t* pte_base) {
     }
     virt->phy_allocator->put_page((uint64_t)pte_base - HHDM_BASE);
 }
+void free_pd(VirtPageAllocator* virt, uint64_t* pde_base) {
+    for (int i = 0; i < 512; i++) {
+        if (pde_base[i] & VirtPageAllocator::P) {
+            if (pde_base[i] & VirtPageAllocator::PS) {
+                uint64_t pa = (pde_base[i] & PTE_ADDR_MASK);
+                virt->phy_allocator->put_page(pa);
+                pde_base[i] = 0;
+            }
+            else {
+                uint64_t next_table_phys = pde_base[i] & PTE_ADDR_MASK;
+                uint64_t* pt_base = (uint64_t*)(HHDM_BASE + next_table_phys);
 
-    void free_pd(VirtPageAllocator * virt, uint64_t * pde_base) {
-        for (int i = 0; i < 512; i++) {
-            if (pde_base[i] & VirtPageAllocator::P) {
-                if (pde_base[i] & VirtPageAllocator::PS) {
-                    uint64_t pa = (pde_base[i] & PTE_ADDR_MASK);
-                    virt->phy_allocator->put_page(pa);
-                    pde_base[i] = 0;
-                }
-                else {
-                    uint64_t next_table_phys = pde_base[i] & PTE_ADDR_MASK;
-                    uint64_t* pt_base = (uint64_t*)(HHDM_BASE + next_table_phys);
-
-                    free_pt(virt, pt_base);
-                    pde_base[i] = 0;
-                }
+                free_pt(virt, pt_base);
+                pde_base[i] = 0;
             }
         }
-        virt->phy_allocator->put_page((uint64_t)pde_base - HHDM_BASE);
     }
+    virt->phy_allocator->put_page((uint64_t)pde_base - HHDM_BASE);
+}
 
-    void free_pdpt(VirtPageAllocator * virt, uint64_t * pdpte_base) {
-        for (int i = 0; i < 512; i++) {
-            if (pdpte_base[i] & VirtPageAllocator::P) {
-                if (pdpte_base[i] & VirtPageAllocator::PS) { // 1GB Page
-                    // [수정] 1GB 페이지
-                    uint64_t pa = (pdpte_base[i] & PTE_ADDR_MASK);
-                    virt->phy_allocator->put_page(pa);
-                    pdpte_base[i] = 0;
-                }
-                else {
-                    // [수정] 다음 테이블 주소 계산
-                    uint64_t next_table_phys = pdpte_base[i] & PTE_ADDR_MASK;
-                    uint64_t* pd_base = (uint64_t*)(HHDM_BASE + next_table_phys);
+void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
+    for (int i = 0; i < 512; i++) {
+        if (pdpte_base[i] & VirtPageAllocator::P) {
+            if (pdpte_base[i] & VirtPageAllocator::PS) { // 1GB Page
+                // [수정] 1GB 페이지
+                uint64_t pa = (pdpte_base[i] & PTE_ADDR_MASK);
+                virt->phy_allocator->put_page(pa);
+                pdpte_base[i] = 0;
+            }
+            else {
+                // [수정] 다음 테이블 주소 계산
+                uint64_t next_table_phys = pdpte_base[i] & PTE_ADDR_MASK;
+                uint64_t* pd_base = (uint64_t*)(HHDM_BASE + next_table_phys);
 
-                    free_pd(virt, pd_base);
-                    pdpte_base[i] = 0;
-                }
+                free_pd(virt, pd_base);
+                pdpte_base[i] = 0;
             }
         }
-        virt->phy_allocator->put_page((uint64_t)pdpte_base - HHDM_BASE);
     }
+    virt->phy_allocator->put_page((uint64_t)pdpte_base - HHDM_BASE);
+}
 
-    void VirtPageAllocator::free_all_low_pages() {
-        _lockv();
-        // User Space (0~256 엔트리) 정리
-        for (int i = 0; i < 256; i++) {
-            uint64_t* pml4e = (uint64_t*)pml4 + i;
-            if (*pml4e & P) {
-                // [수정] 마스크 적용
-                uint64_t next_table_phys = *pml4e & PTE_ADDR_MASK;
+void VirtPageAllocator::free_all_low_pages() {
+    _lockv();
+    // User Space (0~256 엔트리) 정리
+    for (int i = 0; i < 256; i++) {
+        uint64_t* pml4e = (uint64_t*)pml4 + i;
+        if (*pml4e & P) {
+            uint64_t next_table_phys = *pml4e & PTE_ADDR_MASK;
 
-                uint64_t* pdpte_base = (uint64_t*)(HHDM_BASE + next_table_phys);
+            uint64_t* pdpte_base = (uint64_t*)(HHDM_BASE + next_table_phys);
 
-                free_pdpt(this, pdpte_base);
-                *pml4e = 0;
-            }
-        }
-        reload_cr3();
-        _unlockv();
-    }
-    void VirtPageAllocator::free_virt_pages(uint64_t va, uint64_t size) {
-        if (va & 0xFFF || size & 0xFFF) return; // 정렬 불량
-        uint64_t pages = (size + 4095) / 4096;
-        for (uint64_t i = 0; i < pages; i++) {
-            phy_allocator->put_page(free_virt_page(va + i * 4096));
+            free_pdpt(this, pdpte_base);
+            *pml4e = 0;
         }
     }
-
-    uint64_t VirtPageAllocator::get_mapping(uint64_t va) {
-        if (va & 0xFFF) return ~0ULL; // 정렬 불량
-        // PML4E
-        uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
-        if (!(*pml4e & P)) { _unlockv(); return ~0ULL; } // 미할당
-        // PDPTE
-        uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
-        if (!(*pdpte & P)) { _unlockv(); return ~0ULL; } // 미할당
-        if (*pdpte & PS) {
-            uint64_t pa = (*pdpte & ~0x3FFFFFFFULL) | (va & 0x3FFFFFFFULL);
-            _unlockv();
-            return pa; // 1GiB 페이지
-        }
-        // PDE
-        uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
-        if (!(*pde & P)) { _unlockv(); return ~0ULL; } // 미할당
-        if (*pde & PS) {
-            uint64_t pa = (*pde & ~0x1FFFFFULL) | (va & 0x1FFFFFULL);
-            _unlockv();
-            return pa; // 2MiB 페이지
-        }
-        // PTE
-        uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
-        if (!(*pte & P)) { _unlockv(); return ~0ULL; } // 미할당
-        uint64_t pa = *pte;
-        return pa;
+    reload_cr3();
+    _unlockv();
+}
+void VirtPageAllocator::free_virt_pages(uint64_t va, uint64_t size) {
+    if (va & 0xFFF || size & 0xFFF) return; // 정렬 불량
+    uint64_t pages = (size + 4095) / 4096;
+    for (uint64_t i = 0; i < pages; i++) {
+        phy_allocator->put_page(free_virt_page(va + i * 4096));
     }
+}
+
+uint64_t VirtPageAllocator::get_pte(uint64_t va) {
+    if (va & 0xFFF) return ~0ULL; // 정렬 불량
+    // PML4E
+    uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
+    if (!(*pml4e & P)) { return ~0ULL; } // 미할당
+    // PDPTE
+    uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
+    if (!(*pdpte & P)) { return ~0ULL; } // 미할당
+    if (*pdpte & PS) {
+		return *pdpte; // 1GiB 페이지
+    }
+    // PDE
+    uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
+    if (!(*pde & P)) { return ~0ULL; } // 미할당
+    if (*pde & PS) {
+        return *pde; // 2MiB 페이지
+    }
+    // PTE
+    uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
+    if (!(*pte & P)) { return ~0ULL; } // 미할당
+    uint64_t pa = *pte;
+    return pa;
+}
+uint64_t VirtPageAllocator::get_pa(uint64_t va) {
+    if (va & 0xFFF) return ~0ULL; // 정렬 불량
+    // PML4E
+    uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
+    if (!(*pml4e & P)) { return ~0ULL; } // 미할당
+    // PDPTE
+    uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
+    if (!(*pdpte & P)) { return ~0ULL; } // 미할당
+    if (*pdpte & PS) {
+        uint64_t pa = (*pdpte & ~0x3FFFFFFFULL) | (va & 0x3FFFFFFFULL);
+        return pa; // 1GiB 페이지
+    }
+    // PDE
+    uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
+    if (!(*pde & P)) { return ~0ULL; } // 미할당
+    if (*pde & PS) {
+        uint64_t pa = (*pde & ~0x1FFFFFULL) | (va & 0x1FFFFFULL);
+        return pa; // 2MiB 페이지
+    }
+    // PTE
+    uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
+    if (!(*pte & P)) { return ~0ULL; } // 미할당
+    uint64_t pa = *pte;
+    return pa & PTE_ADDR_MASK;
+}

@@ -15,15 +15,19 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
     if (!(error_code & (1ull << 2ull))) {
         uint64_t pml4_entry = (cr2 >> 39) & 0x1FF;
+        if (pml4_entry == 259) {    // 새로운 방식으로 교체한거
+			virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
+			return;
+        }
         if (256 <= pml4_entry && pml4_entry <= 268) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
-            memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);
+            memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);      // Todo : 새로운 new방식 특성상 이거 필요없다 싹다 교체하고 바꿔야될듯
             return;
         }
     }
     if (now_process) {
         if (error_code & 1) { // Present인데 PF = 권한 위반
-            uint64_t pte = virt_page_allocator->get_mapping(cr2 & ~0xFFFULL);
+            uint64_t pte = virt_page_allocator->get_pte(cr2 & ~0xFFFULL);
             if (pte != ~0ULL && (pte & VirtPageAllocator::PTE_COW)) {
                 // CoW 처리
                 uint64_t pa = pte & PTE_ADDR_MASK;
@@ -96,8 +100,9 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     uart_print_hex(frame->rip);
     uart_print("\nError Code=");
     uart_print_hex(error_code);
+    __asm__ __volatile__("hlt");
     uart_print("\nProcess id=");
-    uart_print_hex(now_process->process_id);
+    uart_print_hex(now_process->id);
     uart_print("\n");
     char raw_stack[16];
     memcpy(raw_stack, (void*)&cr2, 8);

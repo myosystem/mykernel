@@ -159,13 +159,9 @@ int AHCIDisk::do_rw(uint64_t lba, uint32_t count, uint64_t phys_buf, int write) 
 //  Disk 인터페이스 구현
 // ═══════════════════════════════════════════════════════════════
 int AHCIDisk::read_sector(uint64_t lba, uint32_t count, void* phys_buf) {
-    uart_print("func name ");
-    uart_print(__PRETTY_FUNCTION__);
-    uart_print("\n");
     return do_rw(lba, count, (uint64_t)phys_buf, 0);
 }
 
 int AHCIDisk::write_sector(uint64_t lba, uint32_t count, const void* phys_buf) {
-    uart_print("[AHCI] write_sector\n");
     return do_rw(lba, count, (uint64_t)phys_buf, 1);
 }

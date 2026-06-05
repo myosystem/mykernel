@@ -78,6 +78,8 @@ public:
     }
 
     uint64_t get_phys() { return phys_start; }
+    uint32_t get_enqueue_idx() { return enqueue_idx; }
+    uint64_t get_enqueue_phys() { return phys_start + enqueue_idx * sizeof(TRB); }
 };
 struct PendingCommand {
     uint64_t trb_ptr;    // 명령 링에 들어간 TRB의 실제 물리 주소 (Key)
@@ -134,6 +136,9 @@ public:
         // 3. Runtime Register 구역의 ERDP(0x18 오프셋)에 씁니다.
         *(volatile uint64_t*)(intr_base + 0x18) = erdp_val;
     }
+    uint32_t get_current_control() { return ring[dequeue_idx].control; }
+    uint32_t get_dequeue_idx() { return dequeue_idx; }
+    uint8_t get_cycle_bit() { return cycle_bit; }
 };
 // 1. Command Block Wrapper (CBW) - 호스트가 장치에 명령을 보낼 때 사용
 struct CommandBlockWrapper {

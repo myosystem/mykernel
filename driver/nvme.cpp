@@ -160,9 +160,6 @@ void NVMeDisk::init() {
     namespace_id = 1;
 }
 int NVMeDisk::read_sector(uint64_t lba, uint32_t count, void* phys_buf) {
-    uart_print("func name ");
-    uart_print(__PRETTY_FUNCTION__);
-    uart_print("\n");
     NVMeCmd* iosq = (NVMeCmd*)iosq_virt;
     volatile NVMeCqe* iocq = (volatile NVMeCqe*)iocq_virt;
 

@@ -114,7 +114,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
 		data.status = 0x09;              // 받을 크기 (9바이트)
 		data.control = 0x00010C00; // Type(Data:3), DIR(In:1), Cycle(1)
 
-        status.control = 0x00001060; // Type(Status:4), Cycle(1)
+        status.control = 0x00001060 | (1 << 5); // Type(Status:4), Cycle(1)
 		ep0_ring->push(setup);
 		ep0_ring->push(data);
         status_ptr = (TRB*)ep0_ring->push(status);
@@ -122,7 +122,28 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         __asm__ __volatile__("sfence" ::: "memory");
         controller->doorbell_base[slot_id] = 0; // 한번 클리어
         __asm__ __volatile__("mfence" ::: "memory");
-		controller->doorbell_base[slot_id] = 1;
+        uart_print("ep0 state="); uart_print_hex(output_ctx->endpoints[0].info1 & 0x7); uart_print("\n");
+        uart_print("ep0 tr_ptr="); uart_print_hex(output_ctx->endpoints[0].tr_ptr); uart_print("\n");
+        // EP0 링 상태
+        uart_print("enqueue_idx="); uart_print_hex(ep0_ring->get_enqueue_idx()); uart_print("\n");
+        uart_print("enqueue_phys="); uart_print_hex(ep0_ring->get_enqueue_phys()); uart_print("\n");
+        __asm__ __volatile__("sfence" ::: "memory");
+        controller->doorbell_base[slot_id] = 1;
+        /*
+        {
+            volatile uint32_t i = 0;
+            while (i < 100000000) { // 간단한 타임아웃
+                i = i + 1;
+                __asm__ __volatile__("pause");
+            }
+        }
+        */
+        //uart_print("[XHCI] portsc="); uart_print_hex(portsc); uart_print("\n");// EP0 Context 상태
+        uart_print("ep0 state="); uart_print_hex(output_ctx->endpoints[0].info1 & 0x7); uart_print("\n");
+        uart_print("ep0 tr_ptr="); uart_print_hex(output_ctx->endpoints[0].tr_ptr); uart_print("\n");
+        // EP0 링 상태
+        uart_print("enqueue_idx="); uart_print_hex(ep0_ring->get_enqueue_idx()); uart_print("\n");
+        uart_print("enqueue_phys="); uart_print_hex(ep0_ring->get_enqueue_phys()); uart_print("\n");
         EventTRB ev2 = controller->wait_command(status_ptr, slot_id, port_id, 32); // Transfer Event 이벤트 대기 (Type 32)
         uart_print("2nd code="); uart_print_hex((ev2.status >> 24) & 0xFF); uart_print("\n");
         uart_print("total_length: ");
@@ -132,7 +153,6 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         if (total_length > 4096) {
 			return; // 이상한 데이터 방지
         }
-        
         setup.parameter2 = ((uint32_t)total_length << 16);
 		data.status = total_length; // 받을 크기 (전체 Configuration Descriptor 크기)
 		//status도 동일
@@ -140,8 +160,30 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
 		ep0_ring->push(data);
         status_ptr = (TRB*)ep0_ring->push(status);
         memset((void*)(desc_phys + MMIO_BASE), 0, 4096);
+        //uart_print("[XHCI] portsc="); uart_print_hex(portsc); uart_print("\n");// EP0 Context 상태
+        uart_print("ep0 state="); uart_print_hex(output_ctx->endpoints[0].info1 & 0x7); uart_print("\n");
+        uart_print("ep0 tr_ptr="); uart_print_hex(output_ctx->endpoints[0].tr_ptr); uart_print("\n");
+        // EP0 링 상태
+        uart_print("enqueue_idx="); uart_print_hex(ep0_ring->get_enqueue_idx()); uart_print("\n");
+        uart_print("enqueue_phys="); uart_print_hex(ep0_ring->get_enqueue_phys()); uart_print("\n");
         __asm__ __volatile__("sfence" ::: "memory");
 		controller->doorbell_base[slot_id] = 1;
+        /*
+        {
+			volatile uint32_t i = 0;
+            while (i < 100000000) { // 간단한 타임아웃
+                i = i + 1;
+                __asm__ __volatile__("pause");
+            }
+        }
+        */
+		//Todo : 여기서 이벤트가 안 오는 경우가 있음. 타이밍 이슈인듯? qemu에서 나오는값이랑 실기기랑 비교해야할듯
+        //uart_print("[XHCI] portsc="); uart_print_hex(portsc); uart_print("\n");// EP0 Context 상태
+        uart_print("ep0 state="); uart_print_hex(output_ctx->endpoints[0].info1 & 0x7); uart_print("\n");
+        uart_print("ep0 tr_ptr="); uart_print_hex(output_ctx->endpoints[0].tr_ptr); uart_print("\n");
+        // EP0 링 상태
+        uart_print("enqueue_idx="); uart_print_hex(ep0_ring->get_enqueue_idx()); uart_print("\n");
+        uart_print("enqueue_phys="); uart_print_hex(ep0_ring->get_enqueue_phys()); uart_print("\n");
         controller->wait_command(status_ptr, slot_id, port_id, 32); // Transfer Event 이벤트 대기 (Type 32)
         
         uint8_t* ptr = desc;
@@ -550,7 +592,11 @@ void XHCIController::init() {
     uart_print("[MSIX] IMAN=");     uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
     uart_print("[MSIX] USBCMD=");   uart_print_hex(*usbcmd); uart_print("\n");
     if (!ok) {
-        uart_print("[XHCI] MSI-X not supported!\n");
+        uart_print("[XHCI] MSI-X not supported, trying MSI...\n");
+        ok = setup_msi(pci_bus, pci_slot, pci_func, { 0x35, 0 });
+    }
+    if (!ok) {
+        uart_print("[XHCI] MSI not supported either, giving up\n");
         return;
     }
 
@@ -647,11 +693,20 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
     uint64_t op_base = (uint64_t)mmio_base + cap_length;
     volatile uint32_t* portsc_reg = (volatile uint32_t*)(op_base + 0x400 + (port_id - 1) * 0x10);
     volatile uint32_t portsc = *portsc_reg;
-	//uart_print("[XHCI] portsc="); uart_print_hex(portsc); uart_print("\n");
+
+    // xHCI 전체 상태
+    uart_print("USBSTS="); uart_print_hex(*usbsts); uart_print("\n");
+    uart_print("IMAN="); uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
+
     if (booting) {
         while(1) {
             while (!event_ring->has_event()) { 
-                uart_print("\r[XHCI] USBTS="); uart_print_hex(*usbsts); uart_print("             ");
+                while (!event_ring->has_event()) {
+                    uart_print("\r[XHCI] USBSTS="); uart_print_hex(*usbsts);
+                    uart_print(" ring[idx].control="); uart_print_hex(event_ring->get_current_control());
+                    uart_print(" cycle="); uart_print_hex(event_ring->get_cycle_bit());
+                    uart_print("             ");
+                }
             }
             ev = event_ring->pop();
             event_ring->erdp(intr_base);
