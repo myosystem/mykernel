@@ -36,12 +36,13 @@ void VirtPageAllocator::init(PhysPageAllocator* phy_allocator, uint64_t pml4) {
         pml4 += HHDM_BASE;
     }
     this->pml4 = (void*)pml4;
-    uart_print("VirtPageAllocator initialized with Cr3 at 0x");
-    uart_print_hex(VirtPageAllocator::getCr3());
-    uart_print("\n");
+    //uart_print("VirtPageAllocator initialized with Cr3 at 0x");
+    //uart_print_hex(VirtPageAllocator::getCr3());
+    //uart_print("\n");
 }
 uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t flags) {
-    if ((va & 0xFFF) || (pa & 0xFFF)) return ~0ULL; // 정렬 불량
+    if ((va & 0xFFF) || (pa & 0xFFF)) 
+        return ~0ULL; // 정렬 불량
     //uart_print("va\n0x");
     //uart_print_hex(va);
     //uart_print("\n0x");
@@ -56,34 +57,46 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
     uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
     if (!(*pml4e & P)) {
         uint64_t new_pdpt_pa = phy_allocator->alloc_phy_page();
-        if (!new_pdpt_pa) { _unlockv(); return ~0ULL; }
+        if (!new_pdpt_pa) { 
+            _unlockv(); return ~0ULL; 
+        }
         memset((void*)(HHDM_BASE + new_pdpt_pa), 0, 4096);
         *pml4e = (new_pdpt_pa & ~0xFFFULL) | RW | P | us; // User=0(커널)
     }
 
     // PDPTE
     uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
-    if (*pdpte & PS) { _unlockv(); return ~0ULL; } // 1GiB 페이지 충돌
+    if (*pdpte & PS) { 
+        _unlockv(); return ~0ULL; 
+    } // 1GiB 페이지 충돌
     if (!(*pdpte & P)) {
         uint64_t new_pd_pa = phy_allocator->alloc_phy_page();
-        if (!new_pd_pa) { _unlockv(); return ~0ULL; }
+        if (!new_pd_pa) { 
+            _unlockv(); return ~0ULL; 
+        }
         memset((void*)(HHDM_BASE + new_pd_pa), 0, 4096);
         *pdpte = (new_pd_pa & ~0xFFFULL) | RW | P | us;
     }
 
     // PDE
     uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
-    if (*pde & PS) { _unlockv(); return ~0ULL; } // 2MiB 페이지 충돌
+    if (*pde & PS) { 
+        _unlockv(); return ~0ULL; 
+    } // 2MiB 페이지 충돌
     if (!(*pde & P)) {
         uint64_t new_pt_pa = phy_allocator->alloc_phy_page();
-        if (!new_pt_pa) { _unlockv(); return ~0ULL; }
+        if (!new_pt_pa) { 
+            _unlockv(); return ~0ULL; 
+        }
         memset((void*)(HHDM_BASE + new_pt_pa), 0, 4096);
         *pde = (new_pt_pa & ~0xFFFULL) | RW | P | us;
     }
 
     // PTE
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
-    if (*pte & P) { _unlockv(); return ~0ULL; } // 이미 매핑됨 (구분하려면 별도 코드 사용)
+    if (*pte & P) { 
+        _unlockv(); return ~0ULL; 
+    } // 이미 매핑됨 (구분하려면 별도 코드 사용)
 
     *pte = (pa & ~0xFFFULL) | flags;
 
@@ -193,12 +206,18 @@ bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t
                 // 쓰기 가능 → CoW
                 uint64_t new_flags = saved_flags | VirtPageAllocator::P | VirtPageAllocator::PTE_COW;
                 if (flags & VirtPageAllocator::NX) new_flags |= VirtPageAllocator::NX;
-                if (alloc_virt_page(va, pa, new_flags) == ~0ULL) { _unlockv(); return false; }
+                if (alloc_virt_page(va, pa, new_flags) == ~0ULL) { 
+                    _unlockv(); 
+                    return false;
+                }
                 source.change_flags(va, new_flags);
             }
             else {
                 // 읽기 전용 → 그냥 공유
-                if (alloc_virt_page(va, pa, flags) == ~0ULL) { _unlockv(); return false; }
+                if (alloc_virt_page(va, pa, flags) == ~0ULL) { 
+                    _unlockv(); 
+                    return false; 
+                }
             }
             phy_allocator->get_page(pa);
         }

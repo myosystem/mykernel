@@ -336,6 +336,11 @@ extern "C" void waiting_handler(context_t* frame) {
     {
 		break; // MSG waiting과 동일하게 처리, 대기 상태로 전환만 하면 됨
     }
+    case 0x6:   //Process waiting
+    {
+		now_process->state |= PROCESS_STATE_CHILD_WAIT; // 대기 상태
+        break;
+    }
     case 32:    //Timer waiting
     {
 		KEvent event;

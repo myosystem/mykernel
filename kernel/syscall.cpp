@@ -76,7 +76,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		if (frame->rdi == 0) { // send
 			msg_t* msg = (msg_t*)frame->rsi;
-			msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
+			//msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
 			msg->timestamp = tsc_get();
 			uint64_t pid = frame->rdx;
 			bool is_block = frame->rcx; // 메시지 대기 여부
@@ -194,6 +194,11 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		break;
 	}
+	case 7: // get tsc
+	{
+		frame->rax = tsc_get(); // 반환값: 현재 TSC 값
+		break;
+	}
 	case 9: // mmap
 	{
 		uint64_t size = frame->rdi;
@@ -263,14 +268,14 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	}
 	case 30: // fork
 	{
-		frame->rax = now_process->fork();
+		frame->rax = now_process->fork(frame);
 		break;
 	}
 	case 31: // exec
 	{
 		const char* path = (const char*)frame->rdi;
 		const char** argv = (const char**)frame->rsi;
-		now_process->exec(path, argv, frame); // 반환값: 성공하면 0, 실패하면 -1
+		frame->rax = now_process->exec(path, argv, frame); // 반환값: 성공하면 0, 실패하면 -1
 		break;
 	}
 	case 45: // brk
@@ -296,6 +301,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		Process* exiting = now_process;
 		now_process = next_process();
+		exiting->time_slice = frame->rdi; // 리턴값 남는곳에 저장
 		exiting->~Process();
 		if (exiting->parent == (uint64_t)-1) {
 			Process::operator delete(exiting);

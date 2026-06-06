@@ -158,9 +158,13 @@ public:
 	void* operator new(size_t) {
 		uint64_t result = based_addr;
 		uint64_t index = 0;
-		while (((NewObject*)result)->state == 1) {
+		while (((NewObject*)result)->state & 1) {
 			result += size;
 			index++;
+		}
+		if (result == based_addr) {
+			// 첫 번째 객체가 아직 할당되지 않았음
+			result = based_addr;
 		}
 		((NewObject*)result)->state = 1;
 		((NewObject*)result)->id = index;
@@ -186,7 +190,7 @@ public:
 	static void* get(uint64_t index) {
 		if (virt_page_allocator->get_pa((based_addr + index * size) & ~0xFFFULL) == ~0ULL)
 			return nullptr;
-		if (((NewObject*)(based_addr + index * size))->state == 0)
+		if (!(((NewObject*)(based_addr + index * size))->state & 1))
 			return nullptr;
 		return (void*)(based_addr + index * size);
 	}
