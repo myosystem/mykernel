@@ -186,7 +186,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     }
     display->setHeap();
     delete display_file;
-	add_process(display->id);
+	//add_process(display->id);
     
     Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
@@ -197,7 +197,6 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     add_process(test->id);
     
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);
-    uart_print("\ntest\n");
 	lapic_tsc_deadline_set_ms(10);
     booting = false;
     now_process = next_process();

@@ -180,7 +180,7 @@ public:
 		p->state = 0;
 		if (p->id == biggest - 1) {
 			while (biggest > 0) {
-				NewObject* temp = (NewObject*)(based_addr)+biggest - 1;
+				NewObject* temp = (NewObject*)(based_addr + (biggest - 1) * size);
 				if (temp->state & 0b1) break;
 				biggest--;
 			}

@@ -49,9 +49,9 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
     //uart_print_hex(pa);
     //uart_print("\n");
     _lockv();
-    if (va == pa) {
-        uart_print("identical mapping\n");
-    }
+    //if (va == pa) {
+    //    uart_print("identical mapping\n");
+    //}
     uint64_t us = va & (1ULL << 63) ? 0 : US;
     // PML4E
     uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
