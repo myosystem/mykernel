@@ -1,5 +1,6 @@
 #include "kernel/syscall.h"
 #include "kernel/process.h"
+#include "kernel/power.h"
 #include "debug/log.h"
 #include "util/memory.h"
 #include "kernel/kernel.h"
@@ -204,11 +205,6 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		uint64_t size = frame->rdi;
 		uint64_t addr = now_process->mmap(size, MMAP_READ | MMAP_WRITE, 0);
 		frame->rax = addr; // 반환값: 매핑된 가상 주소
-		uart_print("mmap size: 0x");
-		uart_print_hex(size);
-		uart_print(", addr: 0x");
-		uart_print_hex(addr);
-		uart_print("\n");
 		break;
 	}
 	case 10: // munmap
@@ -278,6 +274,11 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		frame->rax = now_process->exec(path, argv, frame); // 반환값: 성공하면 0, 실패하면 -1
 		break;
 	}
+	case 32: // wait
+	{
+		frame->rax = now_process->wait(); // 반환값: 종료된 자식 프로세스 ID, 오류 시 -1
+		break;
+	}
 	case 45: // brk
 	{
 		uint64_t new_heap_bottom = frame->rdi;
@@ -308,6 +309,10 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		now_process->run_process();
 		break;
+	}
+	case -1ull:
+	{
+		shutdown();
 	}
 	default:
 		frame->rax = -1; // 반환값: 알 수 없는 시스템 콜

@@ -177,7 +177,9 @@ Process::~Process() {
 	Process* parent_process = GetProcess(parent);
     if(parent_process->state & PROCESS_STATE_CHILD_WAIT) {
         parent_process->state &= ~PROCESS_STATE_CHILD_WAIT;
+        parent_process->state &= ~PROCESS_STATE_WAITING;
 		((context_t*)parent_process->kernel_stack)->rax = id; // wait에서 반환값으로 자식 PID 전달
+		add_process(parent_process->id);
     }
 }
 
