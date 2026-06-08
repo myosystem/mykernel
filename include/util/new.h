@@ -2,7 +2,7 @@
 #define __NEW_H__
 #include "util/size.h"
 #include "mm/allocator"
-//#define SLAB_NEW
+#define SLAB_NEW
 #ifdef SLAB_NEW
 template<uint64_t based_addr, uint64_t size, void(*init)(void*), void(*destroy)(void*)>
 class NewObject {
@@ -178,13 +178,6 @@ public:
 	void operator delete(void* ptr) {
 		NewObject* p = (NewObject*)ptr;
 		p->state = 0;
-		if (p->id == biggest - 1) {
-			while (biggest > 0) {
-				NewObject* temp = (NewObject*)(based_addr + (biggest - 1) * size);
-				if (temp->state & 0b1) break;
-				biggest--;
-			}
-		}
 		count--;
 	}
 	static void* get(uint64_t index) {

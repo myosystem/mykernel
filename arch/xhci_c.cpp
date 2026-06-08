@@ -702,10 +702,11 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
         while(1) {
             while (!event_ring->has_event()) { 
                 while (!event_ring->has_event()) {
-                    uart_print("\r[XHCI] USBSTS="); uart_print_hex(*usbsts);
-                    uart_print(" ring[idx].control="); uart_print_hex(event_ring->get_current_control());
-                    uart_print(" cycle="); uart_print_hex(event_ring->get_cycle_bit());
-                    uart_print("             ");
+                    __asm__ __volatile__("pause");
+                    //uart_print("\r[XHCI] USBSTS="); uart_print_hex(*usbsts);
+                    //uart_print(" ring[idx].control="); uart_print_hex(event_ring->get_current_control());
+                    //uart_print(" cycle="); uart_print_hex(event_ring->get_cycle_bit());
+                    //uart_print("             ");
                 }
             }
             ev = event_ring->pop();
@@ -713,10 +714,10 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
             *(volatile uint32_t*)(op_base + 0x04) = 0x08; // EINT 클리어
             *(volatile uint32_t*)(intr_base) |= 0x01;      // IMAN IP 클리어
             count++;
-			uart_print("[XHCI] Waiting for Command Completion... count="); uart_print_hex(count); uart_print("\n");
-            uart_print("[XHCI] Event: Type="); uart_print_hex((ev.control >> 10) & 0x3F);
-            uart_print(" Completion="); uart_print_hex((ev.status >> 24) & 0xFF);
-            uart_print("\n");
+			//uart_print("[XHCI] Waiting for Command Completion... count="); uart_print_hex(count); uart_print("\n");
+            //uart_print("[XHCI] Event: Type="); uart_print_hex((ev.control >> 10) & 0x3F);
+            //uart_print(" Completion="); uart_print_hex((ev.status >> 24) & 0xFF);
+            //uart_print("\n");
             if (ev.ptr != (uint64_t)ptr ||
                 ((ev.control >> 10) & 0x3F) != expected_type ||
                 ((ev.control >> 24) & 0xFF) != slot_id ||
@@ -726,18 +727,18 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
                     if (event.arg[0] == ev.ptr && event.arg[1] == ((ev.control >> 24) & 0xFF) && event.arg[2] == ((ev.control >> 16) & 0xFF)) {
                         if (event.callback != nullptr && event.callback != basic_callback)
                             event.callback(&event, ev.status, ev.control, event.callback_ctx);
-                        uart_print("[XHCI] KEvent arg0="); uart_print_hex(event.arg[0]);
-                        uart_print(" arg1="); uart_print_hex(event.arg[1]);
-                        uart_print(" arg2="); uart_print_hex(event.arg[2]);
-                        uart_print("\n");
+                        //uart_print("[XHCI] KEvent arg0="); uart_print_hex(event.arg[0]);
+                        //uart_print(" arg1="); uart_print_hex(event.arg[1]);
+                        //uart_print(" arg2="); uart_print_hex(event.arg[2]);
+                        //uart_print("\n");
                         xhci_event->erase(i);
                         i--;
                     }
                 }
             }
             else {
-				uart_print("[XHCI] Command Completed! ptr="); uart_print_hex(ev.ptr);
-                uart_print("\n");
+				//uart_print("[XHCI] Command Completed! ptr="); uart_print_hex(ev.ptr);
+                //uart_print("\n");
                 break;
             }
         }

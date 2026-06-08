@@ -185,7 +185,6 @@ bool VirtPageAllocator::change_flags(uint64_t va, uint64_t flags) {
     *pte = (*pte & PTE_ADDR_MASK) | (flags & ~PTE_ADDR_MASK);
     return true;
 }
-
 bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t size) {
 	uint64_t pages = (size + 4095) / 4096;
     for (uint64_t i = 0; i < pages; i++) {

@@ -195,9 +195,32 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		break;
 	}
-	case 7: // get tsc
+	case 7: // get info
 	{
-		frame->rax = tsc_get(); // 반환값: 현재 TSC 값
+		if (frame->rdi == 0) {
+			frame->rax = tsc_get(); // 반환값: 현재 TSC 값
+		}
+		else if (frame->rdi == 1) {
+			frame->rax = g_tsc_hz; // 반환값: TSC 주파수
+		}
+		else if (frame->rdi == 2) {
+			frame->rax = phy_page_allocator->get_total_pages();
+		}
+		else if (frame->rdi == 3) {
+			frame->rax = phy_page_allocator->get_used_pages();
+		}
+		else if (frame->rdi == 4) {
+			frame->rax = phy_page_allocator->get_free_pages();
+		}
+		else if (frame->rdi == 5) {
+			frame->rax = Process::get_count();
+		}
+		else if (frame->rdi == 6) {
+			frame->rax = Process::max();
+		}
+		else {
+			frame->rax = -1; // 반환값: 오류
+		}
 		break;
 	}
 	case 9: // mmap

@@ -85,6 +85,7 @@ void init_tss(uint64_t kernel_stack_phys, uint64_t ist1_phys) {
     uint16_t tss_sel = 0x28;
     asm volatile("ltr %0" : : "m"(tss_sel));
 }
+__attribute__((noinline))
 void* mmap_entry::operator new(size_t size) noexcept {
     mmap_entry* new_entry = (mmap_entry*)MMAP_ENTRY_BASE;
     while (new_entry->flags & MMAP_USED) {
@@ -230,30 +231,8 @@ Process* next_process() {
 }
 __attribute__((noreturn))
 void Process::run_process() {
-    //uart_print("\nnow_process addr:");
-	//uart_print_hex((uint64_t)this);
     tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
     uint64_t now_rsp = (uint64_t)this->kernel_stack;
-	//uart_print("\nSwitching to process PID ");
-	//uart_print(this->id);
-    //uart_print("\nvirt:");
-	//uart_print_hex((uint64_t)&virt_page_allocator);
-    /*
-    uart_print("\nkernel_stack: ");
-    uart_print_hex((uint64_t)this->kernel_stack);
-
-    // kernel_stack이 가리키는 곳의 내용도 출력
-    // context_t 구조체 맨 끝(iretq가 읽을 부분): RIP, CS, RFLAGS, RSP, SS
-    context_t* ctx = (context_t*)this->kernel_stack;
-    uart_print("\nRIP: ");
-    uart_print_hex(ctx->rip);
-    uart_print("\nCS: ");
-    uart_print_hex(ctx->cs);
-    uart_print("\nRFLAGS: ");
-    uart_print_hex(ctx->rflags);
-    uart_print("\nRSP: ");
-    uart_print_hex(ctx->rsp);
-    */
     virt_page_allocator = this->pallocator;
     virt_page_allocator->setCr3();
     __asm__ __volatile__ (
@@ -306,12 +285,13 @@ inline void _lockmmap() {
 inline void _unlockmmap() {
     __atomic_clear(&mmap_lock, __ATOMIC_RELEASE);
 }
+//__attribute__((optimize("O0")))
 uint64_t Process::mmap(uint64_t size, uint64_t flags, uint64_t arg) {
 	if (size == 0) return ~0ULL;
 	_lockmmap();
     uint64_t page_count = (size + PageSize - 1) / PageSize;
-    mmap_entry* entry = mmap_table;
-	mmap_entry* last = nullptr;
+    volatile mmap_entry* entry = mmap_table;
+	volatile mmap_entry* last = nullptr;
     while (entry != nullptr) {
         if (last == nullptr) {
             if (user_stack_top - entry->va_end > page_count * PageSize) {
@@ -332,17 +312,17 @@ uint64_t Process::mmap(uint64_t size, uint64_t flags, uint64_t arg) {
                 _unlockmmap();
                 return ~0ULL; // 할당 불가
 			}
-    mmap_entry* new_entry = new mmap_entry();
+    volatile mmap_entry* new_entry = new mmap_entry();
     if (last) {
-        last->next = new_entry;
-		new_entry->next = entry;
+        last->next = (mmap_entry*)new_entry;
+		new_entry->next = (mmap_entry*)entry;
         new_entry->va_end = last->va_start - 1;
 		new_entry->va_start = last->va_start - page_count * PageSize;
         new_entry->arg = arg;
 		new_entry->flags |= flags;
     } else {
-        mmap_table = new_entry;
-        mmap_table->next = entry;
+        mmap_table = (mmap_entry*)new_entry;
+        mmap_table->next = (mmap_entry*)entry;
 		mmap_table->va_end = user_stack_top - 1;
 		mmap_table->va_start = user_stack_top - page_count * PageSize;
 		mmap_table->arg = arg;
