@@ -2,7 +2,7 @@
 #define __NEW_H__
 #include "util/size.h"
 #include "mm/allocator"
-#define SLAB_NEW
+//#define SLAB_NEW
 #ifdef SLAB_NEW
 template<uint64_t based_addr, uint64_t size, void(*init)(void*), void(*destroy)(void*)>
 class NewObject {
@@ -119,9 +119,7 @@ private:
 		}
 	}
 protected:
-	NewObject() {
-
-	}
+	NewObject() {}
 	~NewObject() {}
 public:
 	void* operator new(size_t) {
@@ -138,12 +136,8 @@ public:
 	}
 	uint64_t state; // 0 = free, 1 = used 나머지 비트는 자유롭게 사용 가능 다른 구현과의 통일성을 위해 유지
 	uint64_t id;
-	static uint64_t max() {
-		return new_id;
-	}
-	static uint64_t get_count() {
-		return count;
-	}
+	static uint64_t max() { return new_id; }
+	static uint64_t get_count() { return count; }
 };
 #else
 template<uint64_t based_addr, uint64_t size, void(*init)(void*), void(*destroy)(void*)>
@@ -161,10 +155,6 @@ public:
 		while (((NewObject*)result)->state & 1) {
 			result += size;
 			index++;
-		}
-		if (result == based_addr) {
-			// 첫 번째 객체가 아직 할당되지 않았음
-			result = based_addr;
 		}
 		((NewObject*)result)->state = 1;
 		((NewObject*)result)->id = index;
