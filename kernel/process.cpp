@@ -199,10 +199,13 @@ void Process::setHeap() {
     heap_bottom = code_va_base;
 	heap_top = code_va_base;    // 힙은 비어있는 상태로 시작
 }
+uint64_t sig_page_phys;
 void init_process() {
     process_queue = new (process_queue_buf) queue<size_t>();
 	time_event = new (time_event_buf) HeapTree<KEvent>((void*)0xFFFF840000000000);
     xhci_event = new (xhci_event_buf) vector<KEvent>;
+    sig_page_phys = phy_page_allocator->alloc_phy_page();
+    uint8_t* sig_page = (uint8_t*)(sig_page_phys + HHDM_BASE);
 }
 void add_process(size_t index) {
 	if (index == IDLE_PROCESS_PID) {
@@ -539,6 +542,11 @@ uint64_t Process::wait() {
         return result;
     }
     return ~0ULL; // 오류 시 -1 반환
+}
+uint64_t Process::signal(context_t* ctx) {
+    memcpy(&signal_save, ctx, sizeof(context_t));
+    ctx->rsp -= 128;
+
 }
 uint64_t get_process_count() {
     return Process::get_count();

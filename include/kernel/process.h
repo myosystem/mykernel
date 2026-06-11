@@ -156,11 +156,12 @@ typedef struct {
 #define MAX_MESSAGE_QUEUE_INT 256
 void pinit(void* obj);
 void pdestroy(void* obj);
-class Process : public NewObject<PROCESS_QUEUE_BASE, 300, pinit, pdestroy> {
+class Process : public NewObject<PROCESS_QUEUE_BASE, 500, pinit, pdestroy> {
 private:
     queue<msg_t> msgq;
 	queue<uint64_t> waiting_msgq; // 메시지 대기 중인 프로세스들의 PID 저장
 	vector<uint64_t> children; // 자식 프로세스들의 PID 저장
+    context_t signal_save;
 public:
     uint64_t cr3;
     uint64_t kernel_stack_phys;
@@ -193,6 +194,7 @@ public:
 	uint64_t exec(const char* path, const char* argv[], context_t* ctx);
     uint64_t wait();
 	uint64_t waitpid(uint64_t pid);
+    uint64_t signal(context_t* ctx);
 };
 extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 수 있도록 확장 필요
 extern HeapTree<KEvent>* time_event;

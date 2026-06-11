@@ -77,7 +77,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		if (frame->rdi == 0) { // send
 			msg_t* msg = (msg_t*)frame->rsi;
-			//msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
+			msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
 			msg->timestamp = tsc_get();
 			uint64_t pid = frame->rdx;
 			bool is_block = frame->rcx; // 메시지 대기 여부
@@ -336,6 +336,22 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	case -1ull:
 	{
 		shutdown();
+	}
+	case 62: // lseek
+	{
+		File* file = (File*)now_process->open_files[frame->rdi];
+		if (!file) { frame->rax = (uint64_t)-1; break; }
+		int64_t offset = (int64_t)frame->rsi;
+		int whence = (int)frame->rdx;
+		int64_t new_offset;
+		if      (whence == 0) new_offset = offset;
+		else if (whence == 1) new_offset = (int64_t)file->tell() + offset;
+		else if (whence == 2) new_offset = (int64_t)file->size() + offset;
+		else { frame->rax = (uint64_t)-1; break; }
+		if (new_offset < 0) { frame->rax = (uint64_t)-1; break; }
+		if (file->seek((uint64_t)new_offset) < 0) { frame->rax = (uint64_t)-1; break; }
+		frame->rax = file->tell();
+		break;
 	}
 	default:
 		frame->rax = -1; // 반환값: 알 수 없는 시스템 콜
