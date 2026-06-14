@@ -136,18 +136,18 @@ typedef struct {
     union {
         // 일반적인 정수형 인자들
         struct {
-            uint64_t arg[3];
+            uint64_t arg[5];
         } params;
 
         // 공유 메모리나 문자열 처리를 위한 구조
         struct {
-            void* addr;
+            void* addr[3];
             uint64_t size;
             uint64_t flags;
         } memory;
 
         // 데이터 페이로드 (짧은 메시지 직송용)
-        uint8_t raw[24];
+        uint8_t raw[40];
     } payload;
 
     uint64_t timestamp;     // 8 bytes
@@ -203,6 +203,7 @@ extern Process* now_process;
 #define IDLE_PROCESS_PID ((unsigned long)-1)
 extern Process* idle_process;
 void init_process();
+void init_trampoline(File* trampoline);
 Process* GetProcess(size_t index);
 void add_process(size_t process_id);
 Process* next_process();

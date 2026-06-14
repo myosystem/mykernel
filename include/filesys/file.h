@@ -2,7 +2,9 @@
 #define __FILE_H__
 #include "filesys/partition.h"
 #include "kernel/process.h"
+#include "util/new.h"
 #define FILE_QUEUE_BASE 0xFFFF838000000000ULL
+#define EOF (-1)
 struct PathResolveResult {
 	Partition* target_partition; // 찾은 파티션 객체
 	const char* relative_path;   // 파티션 내부 경로 (예: "System/Kernel.elf")
@@ -10,14 +12,13 @@ struct PathResolveResult {
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition);
 File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id);
 File* kernel_open_file(const char* path);
-class File {
-private:
+class File : public NewObject<FILE_QUEUE_BASE,0x200,nullptr,nullptr> {
+protected:
 	Partition* partition;
 	uint64_t file_size;
 	uint64_t current_offset;
 	uint64_t file_id;
 	uint64_t meta_id;
-	uint8_t state;
 	uint64_t refcount;
 public:
 	File(Partition* part, uint64_t file_id, uint64_t meta_id, uint64_t size)
@@ -31,11 +32,10 @@ public:
 	virtual uint64_t size();
 	virtual void close();
 	virtual void open();
-	void* operator new(size_t size);
-	void operator delete(void* ptr);
 	static File* get(uint64_t index);
 	uint64_t get_file_id() const { return file_id; }
 	Partition* get_partition() const { return partition; }
+	uint64_t get_refcount() const { return refcount; }
 };
 class STDIn : public File {
 	public:

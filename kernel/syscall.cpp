@@ -53,18 +53,59 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		break;
 	}
-	case 8: // open
+	case 8: // fd
 	{
-		const char* path = (const char*)frame->rdi;
-		File* file = vfs_open(path, now_process->current_partition, now_process->cwd_cluster);
-		if (file != nullptr) {
-			uart_print("Opened file: "); uart_print(path); uart_print("\n");
-			uint64_t fd = now_process->open_files.push_back(file);
-			frame->rax = fd; // 반환값: 파일 디스크립터 (인덱스)
+		if (frame->rdi == 0) { // open
+			const char* path = (const char*)frame->rsi;
+			File* file = vfs_open(path, now_process->current_partition, now_process->cwd_cluster);
+			if (file != nullptr) {
+				uart_print("Opened file: "); uart_print(path); uart_print("\n");
+				uint64_t fd = now_process->open_files.push_back(file);
+				frame->rax = fd; // 반환값: 파일 디스크립터 (인덱스)
+			}
+			else {
+				uart_print("Failed to open "); uart_print(path); uart_print("\n");
+				frame->rax = -1; // 반환값: 오류
+			}
 		}
-		else {
-			uart_print("Failed to open "); uart_print(path); uart_print("\n");
-			frame->rax = -1; // 반환값: 오류
+		else if (frame->rdi == 1) { // close
+			uint64_t fd = frame->rsi;
+			void*& slot = now_process->open_files[fd];
+			File* file = (File*)slot;
+			if (file != nullptr) {
+				file->close();
+				slot = nullptr;
+				frame->rax = 0;
+			}
+			else {
+				frame->rax = -1;
+			}
+		}
+		else if (frame->rdi == 2) { // dup
+			uint64_t old_fd = frame->rsi;
+			uint64_t new_fd = frame->rdx;
+			if (old_fd == new_fd) {
+				frame->rax = 0;
+				break;
+			}
+			if (new_fd + 1 > now_process->open_files.get_size()) {
+				frame->rax = -1; // 지금 push_back방식으로 추가해서 이건 나중에 다 뜯어고치면서 구현
+				break;
+			}
+			void*& old_slot = now_process->open_files[old_fd];
+			File* file = (File*)old_slot;
+			if (file != nullptr) {
+				file->open();
+				void*& new_slot = now_process->open_files[new_fd];
+				file = (File*)new_slot;
+				if (file) {
+					file->close();
+				}
+				new_slot = old_slot;
+			}
+			else {
+				frame->rax = -1;
+			}
 		}
 		break;
 	}

@@ -36,7 +36,8 @@ private:
 				uint64_t new_slab = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
 				for (uint32_t i = 0; i < SLAB_COUNT; i++) {
 					NewObject* obj = (NewObject*)new_slab;
-					init(obj);	// 기초적인 초기화
+					if (init)
+						init(obj);	// 기초적인 초기화
 					obj->id = new_id++;
 					new_slab += size;
 				}
@@ -160,7 +161,8 @@ public:
 		((NewObject*)result)->id = index;
 		if (index >= biggest) {
 			biggest = index + 1; // biggest = 지금까지 쓴 최대 슬롯 수
-			init((void*)result);
+			if (init)
+				init((void*)result);
 		}
 		count++;
 		return (void*)result;

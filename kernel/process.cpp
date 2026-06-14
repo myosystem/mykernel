@@ -200,12 +200,45 @@ void Process::setHeap() {
 	heap_top = code_va_base;    // 힙은 비어있는 상태로 시작
 }
 uint64_t sig_page_phys;
+uint8_t idle_process_buf[sizeof(Process)];
+__attribute__((naked))
+void idle_process_func();
 void init_process() {
     process_queue = new (process_queue_buf) queue<size_t>();
 	time_event = new (time_event_buf) HeapTree<KEvent>((void*)0xFFFF840000000000);
     xhci_event = new (xhci_event_buf) vector<KEvent>;
+    virt_page_allocator->free_all_low_pages();
+    for (uint64_t i = 256; i <= 268; i++) {
+        volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
+        *pml4_entry_addr = 0;
+    }
+    idle_process = (Process*)::operator new (sizeof(Process), idle_process_buf);
+    idle_process->cr3 = virt_page_allocator->getCr3() + HHDM_BASE;
+    idle_process->state = 1;
+    idle_process->code_va_base = (uint64_t)idle_process_func;
+    idle_process->kernel_stack_phys = phy_page_allocator->alloc_phy_page();
+    idle_process->kernel_stack = (uint64_t*)(idle_process->kernel_stack_phys + HHDM_BASE);
+    idle_process->user_stack_bottom = (uint64_t)idle_process->kernel_stack + PageSize;
+    idle_process->user_stack_top = (uint64_t)idle_process->kernel_stack;
+    idle_process->pallocator = virt_page_allocator; // 재사용
+    idle_process->time_slice = 10;
+    idle_process->id = IDLE_PROCESS_PID; // idle 프로세스는 고유한 ID가 없음
+    *(--idle_process->kernel_stack) = 0x10;
+    *(--idle_process->kernel_stack) = idle_process->user_stack_bottom;
+    *(--idle_process->kernel_stack) = 0x202; // rflags
+    *(--idle_process->kernel_stack) = 0x08;  // cs
+    *(--idle_process->kernel_stack) = (uint64_t)idle_process->code_va_base; // rip
+    for (int i = 0; i < 15; i++) {
+        *(--idle_process->kernel_stack) = 0;
+    }
+    for (int i = 0; i < 4; i++) {
+        *(--idle_process->kernel_stack) = 0x10;
+    }
     sig_page_phys = phy_page_allocator->alloc_phy_page();
-    uint8_t* sig_page = (uint8_t*)(sig_page_phys + HHDM_BASE);
+}
+void init_trampoline(File* trampoline) {
+    if (trampoline)
+        trampoline->read((void*)(sig_page_phys + HHDM_BASE), PageSize);
 }
 void add_process(size_t index) {
 	if (index == IDLE_PROCESS_PID) {
@@ -546,7 +579,7 @@ uint64_t Process::wait() {
 uint64_t Process::signal(context_t* ctx) {
     memcpy(&signal_save, ctx, sizeof(context_t));
     ctx->rsp -= 128;
-
+    return -1;
 }
 uint64_t get_process_count() {
     return Process::get_count();

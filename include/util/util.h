@@ -32,6 +32,7 @@ extern "C" __attribute__((naked, noinline)) unsigned long long call_xhci(...);
 extern "C" __attribute__((naked, noinline)) unsigned long long yield();
 extern "C" __attribute__((naked, noinline)) unsigned long long call_msg_block();
 extern "C" __attribute__((naked, noinline)) unsigned long long child_zombie_wait();
+extern "C" __attribute__((naked, noinline)) unsigned long long simple_wait();
 #ifdef _MSC_VER
 inline void* operator new(unsigned long long, void* p) noexcept { return p; }
 inline void* operator new[](unsigned long long, void* p) noexcept { return p; }
