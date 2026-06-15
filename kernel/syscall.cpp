@@ -1,6 +1,7 @@
 #include "kernel/syscall.h"
 #include "kernel/process.h"
 #include "kernel/power.h"
+#include "kernel/pipe.h"
 #include "debug/log.h"
 #include "util/memory.h"
 #include "kernel/kernel.h"
@@ -342,6 +343,16 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		frame->rax = now_process->wait(); // 반환값: 종료된 자식 프로세스 ID, 오류 시 -1
 		break;
+	}
+	case 33: // pipe
+	{
+		int* result = (int*)frame->rdi;
+		Pipe* pipe = new Pipe();
+		File* in = pipe->pipe_in();
+		File* out = pipe->pipe_out();
+		result[0] = (int)now_process->open_files.push_back(in);
+		result[1] = (int)now_process->open_files.push_back(out);
+		frame->rax = 0;
 	}
 	case 45: // brk
 	{
