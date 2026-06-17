@@ -2,12 +2,14 @@
 #include "kernel/process.h"
 #include "kernel/power.h"
 #include "kernel/pipe.h"
+#include "kernel/timer_handler.h"
+#include "kernel/kernel.h"
 #include "debug/log.h"
 #include "util/memory.h"
-#include "kernel/kernel.h"
 #include "mm/shm.h"
 #include "arch/lapic.h"
 #include "arch/handler.h"
+#define min(a, b) ((a) < (b) ? (a) : (b))
 #define GOP_PIXEL_FORMAT_RGBR     0   // PixelRedGreenBlueReserved8BitPerColor
 #define GOP_PIXEL_FORMAT_BGRR     1   // PixelBlueGreenRedReserved8BitPerColor
 #define GOP_PIXEL_FORMAT_BITMASK  2   // PixelBitMask
@@ -31,8 +33,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		if (file != nullptr) { // write to uart
 			const char* buf = (const char*)frame->rsi;
 			uint64_t len = frame->rdx;
-			file->write(buf, len);
-			frame->rax = len; // 반환값: 쓴 바이트 수
+			frame->rax = file->write(buf, len); // 반환값: 쓴 바이트 수
 		}
 		else {
 			frame->rax = -1; // 반환값: 오류
@@ -46,8 +47,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		if (file != nullptr) { // write to uart
 			char* buf = (char*)frame->rsi;
 			uint64_t len = frame->rdx;
-			file->read(buf, len);
-			frame->rax = len; // 반환값: 읽은 바이트 수
+			frame->rax = file->read(buf, len); // 반환값: 읽은 바이트 수
 		}
 		else {
 			frame->rax = -1; // 반환값: 오류
@@ -103,6 +103,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 					file->close();
 				}
 				new_slot = old_slot;
+				frame->rax = new_fd;
 			}
 			else {
 				frame->rax = -1;
@@ -353,6 +354,20 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		result[0] = (int)now_process->open_files.push_back(in);
 		result[1] = (int)now_process->open_files.push_back(out);
 		frame->rax = 0;
+		break;
+	}
+	case 34: // yield
+	{
+		process_queue->enqueue(now_process->id);
+		now_process = next_process();
+		uint64_t nowtime = tsc_get();
+		next_process_time = nowtime + ms_to_ticks(now_process->time_slice);
+		uint64_t nexttime = next_process_time;
+		if (time_event->isEmpty() == false) {
+			nexttime = min(next_process_time, time_event->top().time);
+		}
+		tsc_deadline_set(nexttime);
+		now_process->run_process();
 	}
 	case 45: // brk
 	{

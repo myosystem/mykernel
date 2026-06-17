@@ -19,8 +19,8 @@ unsigned long long call_xhci(...) {
 __attribute__((naked,noinline))
 unsigned long long yield() {
     __asm__ __volatile__(
-        "mov rax, 0x0\n\t"
-        "int 0x81\n\t"
+        "mov rax, 34\n\t"
+        "int 0x80\n\t"
         "ret\n\t"
         ::: "rax", "rcx", "r11", "memory"
     );

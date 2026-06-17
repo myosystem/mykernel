@@ -121,7 +121,7 @@ private:
 	}
 protected:
 	NewObject() {}
-	~NewObject() {}
+	virtual ~NewObject() {}
 public:
 	void* operator new(size_t) {
 		return slab_alloc();
@@ -148,8 +148,10 @@ private:
 	inline static uint64_t biggest = 0;
 protected:
 	NewObject() {}
-	~NewObject() {}
+	virtual ~NewObject() {}
 public:
+	uint64_t state;
+	uint64_t id;
 	void* operator new(size_t) {
 		uint64_t result = based_addr;
 		uint64_t index = 0;
@@ -181,8 +183,6 @@ public:
 	}
 	static uint64_t max() { return biggest; }
 	static uint64_t get_count() { return count; }
-	uint64_t state;
-	uint64_t id;
 };
 #endif
 

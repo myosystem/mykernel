@@ -187,7 +187,7 @@ Process::~Process() {
 void pdestroy(void* obj) {
     Process* process = (Process*)obj;
     phy_page_allocator->put_page(process->cr3 - HHDM_BASE);
-    phy_page_allocator->put_page(process->kernel_stack_phys - PageSize - HHDM_BASE);
+    phy_page_allocator->put_page(process->kernel_stack_phys - PageSize);
 }
 void Process::addCode(void* code_addr) {
     uint64_t code = phy_page_allocator->alloc_phy_page();

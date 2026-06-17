@@ -11,6 +11,11 @@
 static uint8_t console[100 * 40] = { 0, }; // 디버깅용 콘솔 버퍼
 __attribute__((interrupt))
 void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
+    uint64_t rsp;
+    __asm__ __volatile__("mov %0, rsp" : "=r"(rsp));
+    if (rsp <= 0xffffff0000000068) {
+        uart_print("tf");
+    }
     uint64_t cr2;
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
     if (!(error_code & (1ull << 2ull))) {

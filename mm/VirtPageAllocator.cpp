@@ -98,7 +98,7 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
         _unlockv(); return ~0ULL; 
     } // 이미 매핑됨 (구분하려면 별도 코드 사용)
 
-    *pte = (pa & ~0xFFFULL) | flags;
+    *pte = (pa & ~0xFFFULL) | flags | us;
 
     invlpg((void*)va); // TLB flush (해당 VA만)
 
@@ -160,7 +160,7 @@ uint64_t VirtPageAllocator::free_virt_page(uint64_t va) {
     // PTE
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
     if (!(*pte & P)) { _unlockv(); return ~0ULL; } // 미할당
-    uint64_t result = *pte & ~0xFFFULL;
+    uint64_t result = *pte & PTE_ADDR_MASK;
     *pte = 0; // 해제
     invlpg((void*)va); // TLB flush (해당 VA만)
     _unlockv();
@@ -206,7 +206,6 @@ bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t
                 uint64_t new_flags = saved_flags | VirtPageAllocator::P | VirtPageAllocator::PTE_COW;
                 if (flags & VirtPageAllocator::NX) new_flags |= VirtPageAllocator::NX;
                 if (alloc_virt_page(va, pa, new_flags) == ~0ULL) { 
-                    _unlockv(); 
                     return false;
                 }
                 source.change_flags(va, new_flags);
@@ -214,7 +213,6 @@ bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t
             else {
                 // 읽기 전용 → 그냥 공유
                 if (alloc_virt_page(va, pa, flags) == ~0ULL) { 
-                    _unlockv(); 
                     return false; 
                 }
             }

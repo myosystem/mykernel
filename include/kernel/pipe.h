@@ -10,19 +10,11 @@ private:
 	Pipe* pipe;
 public:
 	InPipe(Pipe* pipe) : File(nullptr,0,0,0), pipe(pipe) {}
-	int read(void* buf, uint32_t len) override {
-		pipe->read(buf, len);
-	}
+    int read(void* buf, uint32_t len) override;
 	int write(const void* buf, uint32_t len) override {
 		return -1;
 	}
-	void close() {
-		if (get_refcount() == 1) {
-			pipe->in = nullptr;
-			pipe->close();
-		}
-		File::close();
-	}
+    void close();
 	friend Pipe;
 };
 class OutPipe : public File {
@@ -33,16 +25,8 @@ public:
 	int read(void* buf, uint32_t len) override {
 		return -1;
 	}
-	int write(const void* buf, uint32_t len) override {
-		pipe->write(buf, len);
-	}
-	void close() {
-		if (get_refcount() == 1) {
-			pipe->out = nullptr;
-			pipe->close();
-		}
-		File::close();
-	}
+    int write(const void* buf, uint32_t len) override;
+    void close();
 	friend Pipe;
 };
 class Pipe : public File{

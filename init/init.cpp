@@ -155,7 +155,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     }
     display->setHeap();
     delete display_file;
-	add_process(display->id);
+	//add_process(display->id);
     
     Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기

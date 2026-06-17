@@ -131,11 +131,6 @@ File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id) {
 File* kernel_open_file(const char* path) {
     return vfs_open(path, nullptr, 0);
 }
-File* File::get(uint64_t index) {
-	File* f = (File*)(FILE_QUEUE_BASE + index * sizeof(File));
-	if (f->state == 1) return f;
-    return nullptr;
-}
 int STDIn::read(void* buf, uint32_t len) {
     // 아직 구현 안됨 (키보드 버퍼에서 읽어오는 로직 필요)
     return -1;

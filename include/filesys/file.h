@@ -10,6 +10,7 @@ struct PathResolveResult {
 	const char* relative_path;   // 파티션 내부 경로 (예: "System/Kernel.elf")
 };
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition);
+class File;
 File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id);
 File* kernel_open_file(const char* path);
 class File : public NewObject<FILE_QUEUE_BASE,0x200,nullptr,nullptr> {
@@ -32,7 +33,6 @@ public:
 	virtual uint64_t size();
 	virtual void close();
 	virtual void open();
-	static File* get(uint64_t index);
 	uint64_t get_file_id() const { return file_id; }
 	Partition* get_partition() const { return partition; }
 	uint64_t get_refcount() const { return refcount; }

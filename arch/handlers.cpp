@@ -318,11 +318,6 @@ void basic_callback(void* event_info,uint64_t status, uint64_t control, void* ct
 extern "C" void waiting_handler(context_t* frame) {
     now_process->kernel_stack = (uint64_t*)frame;
     switch (frame->rax) {
-    case 0x0:   //CPU yield
-    {
-		process_queue->enqueue(now_process->id);
-        break; // 그냥 다음 프로세스로 넘어가기만 하면 됨
-    }
     case 0x4:   //MSG waiting
     {
 		if (!now_process->msg_empty()) {
