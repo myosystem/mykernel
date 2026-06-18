@@ -25,7 +25,7 @@ uint64_t PhysPageAllocator::alloc_phy_page() {
             }
         }
     }
-    uart_print("page error!!");
+    uart_print("page error!!\n");
     _unlockp();
     return 0; // 더 이상 할당할 페이지가 없음
 }

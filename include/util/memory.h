@@ -1,6 +1,6 @@
 #ifndef __MEMORY_H__
 #define __MEMORY_H__
-extern "C" __attribute__((no_caller_saved_registers))
+extern "C" __attribute__((no_caller_saved_registers,noinline))
 void* memcpy(void* dest, const void* src, unsigned long long size);
 
 extern "C" __attribute__((no_caller_saved_registers))
