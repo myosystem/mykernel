@@ -30,6 +30,11 @@ else
   CXXFLAGS += -O0
 endif
 
+ALLOC ?= fpa
+ifeq ($(ALLOC),slab)
+  CXXFLAGS += -DSLAB_NEW
+endif
+
 INCLUDES := -Iinclude
 
 LDFLAGS  := -T linker.ld -nostdlib
@@ -49,7 +54,7 @@ OBJS := $(addprefix $(OUTDIR)/,$(SRCS:.cpp=.o))
 # ---------------------------------------------------------------
 # stub — *.S 파일 → 별도 .o 산출물
 # ---------------------------------------------------------------
-STUB_SRCS := $(shell find ./stub -name '*.S' 2>/dev/null)
+STUB_SRCS := $(shell find stub -name '*.S' 2>/dev/null)
 STUB_OBJS := $(addprefix $(OUTDIR)/,$(STUB_SRCS:.S=.o))
 
 # ---------------------------------------------------------------

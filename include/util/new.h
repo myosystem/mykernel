@@ -150,8 +150,8 @@ protected:
 	NewObject() {}
 	virtual ~NewObject() {}
 public:
-	uint64_t state;
-	uint64_t id;
+	volatile uint64_t state;
+	volatile uint64_t id;
 	void* operator new(size_t) {
 		uint64_t result = based_addr;
 		uint64_t index = 0;
