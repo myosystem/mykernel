@@ -207,7 +207,7 @@ void init_process() {
     process_queue = new (process_queue_buf) queue<size_t>();
 	time_event = new (time_event_buf) HeapTree<KEvent>((void*)0xFFFF840000000000);
     xhci_event = new (xhci_event_buf) vector<KEvent>;
-    virt_page_allocator->free_all_low_pages();
+    //virt_page_allocator->free_all_low_pages();
     for (uint64_t i = 256; i <= 268; i++) {
         volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
         *pml4_entry_addr = 0;

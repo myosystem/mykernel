@@ -403,6 +403,8 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	case -1ull:
 	{
 		shutdown();
+		frame->rax = -1; // ½ÇÆÐ
+		break;
 	}
 	case 62: // lseek
 	{

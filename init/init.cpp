@@ -76,9 +76,16 @@ vector<Disk*>* disks;
 uint8_t disk_buf[sizeof(vector<Disk*>)];
 bool booting = true;
 //일단 콘솔부터
+void setup_cpu() {
+    uint64_t cr4;
+    __asm__ __volatile__("mov %0, cr4" : "=r"(cr4));
+    cr4 |= (1u << 7);   // CR4.PGE: enable global pages
+    __asm__ __volatile__("mov cr4, %0" :: "r"(cr4));
+}
 extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     __asm__ __volatile__ ("cli");
     uart_init();
+    setup_cpu();
     init_tss(0, 0);
     init_interrupts();
     //File* trampoline = kernel_open_file("#0/EFI/BOOT/signal.o");
