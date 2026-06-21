@@ -135,7 +135,7 @@ public:
 		}
 		return ((void**)based_addr)[index];
 	}
-	uint64_t state; // 0 = free, 1 = used 나머지 비트는 자유롭게 사용 가능 다른 구현과의 통일성을 위해 유지
+	volatile uint64_t state; // 0 = free, 1 = used 나머지 비트는 자유롭게 사용 가능 다른 구현과의 통일성을 위해 유지
 	uint64_t id;
 	static uint64_t max() { return new_id; }
 	static uint64_t get_count() { return count; }
@@ -151,7 +151,7 @@ protected:
 	virtual ~NewObject() {}
 public:
 	volatile uint64_t state;
-	volatile uint64_t id;
+	uint64_t id;
 	void* operator new(size_t) {
 		uint64_t result = based_addr;
 		uint64_t index = 0;
