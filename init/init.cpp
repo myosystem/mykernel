@@ -5,6 +5,7 @@
 #include "kernel/console.h"
 #include "debug/log.h"
 #include "arch/idt.h"
+#include "arch/msr.h"
 #include "arch/ioapic.h"
 #include "arch/lapic.h"
 #include "arch/handler.h"
@@ -76,11 +77,25 @@ vector<Disk*>* disks;
 uint8_t disk_buf[sizeof(vector<Disk*>)];
 bool booting = true;
 //일단 콘솔부터
+bool g_pmc_ok = false;
 void setup_cpu() {
     uint64_t cr4;
     __asm__ __volatile__("mov %0, cr4" : "=r"(cr4));
     cr4 |= (1u << 7);   // CR4.PGE: enable global pages
     __asm__ __volatile__("mov cr4, %0" :: "r"(cr4));
+    // PMU FIXED_CTR1 = unhalted core cycles (guest exec cycles; frozen during host preempt)
+    uint32_t pa, pb, pc, pd;
+    __asm__ __volatile__("cpuid" : "=a"(pa), "=b"(pb), "=c"(pc), "=d"(pd) : "a"(0xA), "c"(0));
+    (void)pb; (void)pc;
+    if ((pa & 0xFF) >= 2 && (pd & 0x1F) >= 2) {
+        wrmsr(0x38D, rdmsr(0x38D) | 0x30);            // IA32_FIXED_CTR_CTRL: FIXED_CTR1 OS+USR
+        wrmsr(0x38F, rdmsr(0x38F) | (1ull << 33));    // IA32_PERF_GLOBAL_CTRL: enable FIXED_CTR1
+        g_pmc_ok = true;
+    }
+    uart_print(g_pmc_ok ? "pmc ok\n" : "pmc off\n");
+}
+uint64_t get_cycles() {
+    return g_pmc_ok ? rdmsr(0x30A) : tsc_get();       // IA32_FIXED_CTR1
 }
 extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     __asm__ __volatile__ ("cli");

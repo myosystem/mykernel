@@ -9,6 +9,7 @@
 #include "mm/shm.h"
 #include "arch/lapic.h"
 #include "arch/handler.h"
+extern uint64_t get_cycles();
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define GOP_PIXEL_FORMAT_RGBR     0   // PixelRedGreenBlueReserved8BitPerColor
 #define GOP_PIXEL_FORMAT_BGRR     1   // PixelBlueGreenRedReserved8BitPerColor
@@ -260,6 +261,9 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		}
 		else if (frame->rdi == 6) {
 			frame->rax = Process::max();
+		}
+		else if (frame->rdi == 7) {
+			frame->rax = get_cycles(); // guest exec cycles (PMU; tsc fallback)
 		}
 		else {
 			frame->rax = -1; // 반환값: 오류
