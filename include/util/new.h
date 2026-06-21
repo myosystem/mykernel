@@ -155,12 +155,12 @@ public:
 	void* operator new(size_t) {
 		uint64_t result = based_addr;
 		uint64_t index = 0;
-		while (((NewObject*)result)->state & 1) {
+		while (((volatile NewObject*)result)->state & 1) {
 			result += size;
 			index++;
 		}
-		((NewObject*)result)->state = 1;
-		((NewObject*)result)->id = index;
+		((volatile NewObject*)result)->state = 1;
+		((volatile NewObject*)result)->id = index;
 		if (index >= biggest) {
 			biggest = index + 1; // biggest = 지금까지 쓴 최대 슬롯 수
 			if (init)
@@ -170,14 +170,14 @@ public:
 		return (void*)result;
 	}
 	void operator delete(void* ptr) {
-		NewObject* p = (NewObject*)ptr;
+		volatile NewObject* p = (volatile NewObject*)ptr;
 		p->state = 0;
 		count--;
 	}
 	static void* get(uint64_t index) {
 		if (virt_page_allocator->get_pa((based_addr + index * size) & ~0xFFFULL) == ~0ULL)
 			return nullptr;
-		if (!(((NewObject*)(based_addr + index * size))->state & 1))
+		if (!(((volatile NewObject*)(based_addr + index * size))->state & 1))
 			return nullptr;
 		return (void*)(based_addr + index * size);
 	}
