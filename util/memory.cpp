@@ -206,3 +206,14 @@ int strcmp(const char* s1, const char* s2) {
     return *(unsigned char*)s1 - *(unsigned char*)s2;
 }
 */
+__attribute__((naked, noinline))
+int strlen(const char* s) {
+    __asm__ __volatile__(
+        "mov  rcx, -1      \n\t"
+        "xor  eax, eax     \n\t"
+        "repne scasb       \n\t"
+        "not  rcx          \n\t"
+        "lea  eax, [rcx-1] \n\t"
+        "ret               \n\t"
+    );
+}

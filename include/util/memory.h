@@ -13,4 +13,6 @@ extern "C" int strncmp(const char* s1, const char* s2, unsigned long long n);
 extern "C" int strcasecmp(const char* s1, const char* s2);
 
 extern "C" void* strncpy(char* dest, const char* src, unsigned long long n);
+
+extern "C" int strlen(const char* s);
 #endif /* __MEMORY_H__ */
