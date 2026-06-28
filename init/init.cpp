@@ -168,7 +168,6 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
         }
     }
     File* display_file = kernel_open_file("#0/DISPLAY.O");
-    File* test_file = kernel_open_file("#0/TEST.O");
 
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
     Process* display = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_file_id());
@@ -177,8 +176,10 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     }
     display->setHeap();
     delete display_file;
-	//add_process(display->id);
+	add_process(display->id);
     
+    /*
+    File* test_file = kernel_open_file("#0/TEST.O");
     Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         test->addCode((void*)readbuffer);                    //읽은 내용 옮기기
@@ -186,6 +187,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     test->setHeap();
     delete test_file;
     add_process(test->id);
+    */
     
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);
 	lapic_tsc_deadline_set_ms(10);
