@@ -511,6 +511,23 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
         return ~0ULL; // 파일 열기 실패 시 -1 반환
     }
     // 1. 유저 공간 날리기
+    int argc = 0;
+    uint64_t tmp_pa = 0;
+    if (argv != nullptr) {
+        while (argv[argc] != nullptr) argc++;
+    }
+    if (argc > 0) {
+        tmp_pa = phy_page_allocator->alloc_phy_page();
+        uint8_t* buf = (uint8_t*)(tmp_pa + HHDM_BASE);
+        uint64_t* off_arr = (uint64_t*)buf;
+        uint64_t data_off = (uint64_t)argc * 8;
+        for (int i = 0; i < argc; i++) {
+            off_arr[i] = data_off;
+            uint64_t len = strlen(argv[i]) + 1;
+            memcpy(buf + data_off, argv[i], len);
+            data_off += len;
+        }
+    }
     pallocator->free_all_low_pages();
 
     // 2. 새 바이너리 로딩
@@ -543,6 +560,41 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
     memset((void*)ctx, 0, sizeof(context_t));
 	ctx->rip = 0x400000; // 새 코드의 시작 주소
 	ctx->rsp = user_stack_top; // 새 사용자 스택의 시작 주소
+	ctx->rdi = 0;
+	ctx->rsi = 0;
+	if (argc > 0 && tmp_pa) {
+		uint64_t stack_page_va = user_stack_bottom - PageSize;
+		uint64_t stack_page_pa = phy_page_allocator->alloc_phy_page();
+		pallocator->alloc_virt_page(stack_page_va, stack_page_pa,
+			VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
+		uint8_t* tmp = (uint8_t*)(tmp_pa + HHDM_BASE);
+		uint64_t* off_arr = (uint64_t*)tmp;
+		uint8_t* page_buf = (uint8_t*)(stack_page_pa + HHDM_BASE);
+		int64_t cursor = PageSize;
+		uint64_t str_user_addrs[64];
+		int safe_argc = argc > 64 ? 64 : argc;
+		for (int i = safe_argc - 1; i >= 0; i--) {
+			const char* s = (const char*)(tmp + off_arr[i]);
+			int len = strlen(s) + 1;
+			cursor -= len;
+			memcpy(page_buf + cursor, s, len);
+			str_user_addrs[i] = stack_page_va + cursor;
+		}
+		cursor &= ~15LL;
+		cursor -= 8;
+		*(uint64_t*)(page_buf + cursor) = 0ULL;
+		for (int i = safe_argc - 1; i >= 0; i--) {
+			cursor -= 8;
+			*(uint64_t*)(page_buf + cursor) = str_user_addrs[i];
+		}
+		uint64_t argv_user = stack_page_va + cursor;
+		cursor -= 8;
+		*(uint64_t*)(page_buf + cursor) = (uint64_t)safe_argc;
+		ctx->rsp = stack_page_va + cursor;
+		ctx->rdi = (uint64_t)safe_argc;
+		ctx->rsi = argv_user;
+		phy_page_allocator->put_page(tmp_pa);
+	}
 	ctx->rflags = 0x202; // 인터럽트 허용
     ctx->cs = 0x1B; // 사용자 코드 세그먼트
 	ctx->ss = 0x23; // 사용자 데이터 세그먼트
