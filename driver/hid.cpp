@@ -321,26 +321,29 @@ void HIDDevice::hid_event(void* ei, uint64_t st, uint64_t ctrl) {
                 // Keycode
                 else if (val != 0) {
 					now_keycodes.push_back((uint32_t)val);
-                    uint32_t c = hid_keycode_to_ascii(val);
-                    if (c != 0 && !booting) {
-                        /*
-                        ((Process*)PROCESS_QUEUE_BASE)->msg_recv({
-                            (-1ull), MSG_KEY_PRESS, 0, {(uint64_t)c, 0, 0}
-                            });
-                            */
-                        if (is_keycode_pressed(val)) {
-							key_press(c);
-                        }
-                    }
                 }
             }
         }
-        for (uint32_t i = 0; i < prev_keycodes.size(); i++) {
-            if (prev_keycodes[i] != 0) {
-                if (is_keycode_unpressed(prev_keycodes[i], &now_keycodes)) {
-                    uint32_t c = hid_keycode_to_ascii(prev_keycodes[i]);
-                    if (c != 0 && !booting) {
-						key_release(c);
+        if (!booting) {
+            bool same = (now_keycodes.size() == prev_keycodes.size());
+            if (same) {
+                for (int i = 0; i < (int)now_keycodes.size(); i++) {
+                    if (now_keycodes[i] != prev_keycodes[i]) { same = false; break; }
+                }
+            }
+            if (same) {
+                key_held(repeat_key);
+            } else {
+                for (int i = 0; i < (int)now_keycodes.size(); i++) {
+                    if (is_keycode_pressed(now_keycodes[i])) {
+                        uint32_t c = hid_keycode_to_ascii(now_keycodes[i]);
+                        if (c) key_press(c);
+                    }
+                }
+                for (uint32_t i = 0; i < prev_keycodes.size(); i++) {
+                    if (prev_keycodes[i] && is_keycode_unpressed(prev_keycodes[i], &now_keycodes)) {
+                        uint32_t c = hid_keycode_to_ascii(prev_keycodes[i]);
+                        if (c) key_release(c);
                     }
                 }
             }

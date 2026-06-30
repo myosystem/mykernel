@@ -17,8 +17,10 @@ enum {
 	KEY_ESC = 0x120,
 
 };
-extern uint8_t keystate[512];
+extern uint8_t  keystate[512];
+extern uint32_t repeat_key;
 void key_press(uint32_t key);
+void key_held(uint32_t key);
 void key_release(uint32_t key);
 uint8_t get_key_state(uint32_t key);
 #endif // __KEYBOARD_H__
