@@ -7,7 +7,7 @@
 template<uint64_t based_addr, uint64_t size, void(*init)(void*), void(*destroy)(void*)>
 class NewObject {
 private:
-	inline static uint64_t count = 0;
+	volatile inline static uint64_t count = 0;
 	static constexpr uint64_t BUFCTL_END = 0xFFFF;
 	static constexpr uint32_t SLAB_COUNT = 4072 / (size + 2);
 	struct SlabMeta {
@@ -20,7 +20,7 @@ private:
 	inline static SlabMeta* partial = nullptr;
 	inline static SlabMeta* full = nullptr;
 	inline static SlabMeta* empty = nullptr;
-	inline static uint64_t new_id = 0;
+	volatile inline static uint64_t new_id = 0;
 	static void* slab_alloc() {
 		if (!partial) {		// 사용할 수 있는 슬랩이 없으면 새로 할당
 			if (empty) {	// 빈 슬랩이 있으면 그것부터 사용
@@ -38,7 +38,8 @@ private:
 					NewObject* obj = (NewObject*)new_slab;
 					if (init)
 						init(obj);	// 기초적인 초기화
-					obj->id = new_id++;
+					obj->id = new_id + 1;
+					new_id = new_id + 1;
 					new_slab += size;
 				}
 				SlabMeta* s = (SlabMeta*)new_slab;
@@ -58,7 +59,7 @@ private:
 		((NewObject*)result)->state = 1;	// 사용 중으로 표시
 		((void**)based_addr)[((NewObject*)result)->id] = result;
 		partial->s_free = partial->bufctl[partial->s_free];
-		count++;
+		count = count + 1;
 		if (partial->refcnt == SLAB_COUNT) {
 			SlabMeta* s = partial;
 			partial = (SlabMeta*)s->next;
@@ -78,7 +79,7 @@ private:
 		uint64_t slab_addr = (uint64_t)ptr & ~0xFFFULL;
 		SlabMeta* s = (SlabMeta*)(slab_addr + size * SLAB_COUNT);
 		s->refcnt--;
-		count--;
+		count = count - 1;
 		uint32_t index = ((uint64_t)ptr - slab_addr) / size;
 		s->bufctl[index] = s->s_free;
 		s->s_free = index;
@@ -144,8 +145,8 @@ public:
 template<uint64_t based_addr, uint64_t size, void(*init)(void*), void(*destroy)(void*)>
 class NewObject {
 private:
-	inline static uint64_t count = 0;
-	inline static uint64_t biggest = 0;
+	volatile inline static uint64_t count = 0;
+	volatile inline static uint64_t biggest = 0;
 protected:
 	NewObject() {}
 	virtual ~NewObject() {}
@@ -166,13 +167,13 @@ public:
 			if (init)
 				init((void*)result);
 		}
-		count++;
+		count = count + 1;
 		return (void*)result;
 	}
 	void operator delete(void* ptr) {
 		volatile NewObject* p = (volatile NewObject*)ptr;
 		p->state = 0;
-		count--;
+		count = count - 1;
 	}
 	static void* get(uint64_t index) {
 		if (virt_page_allocator->get_pa((based_addr + index * size) & ~0xFFFULL) == ~0ULL)

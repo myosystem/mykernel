@@ -35,6 +35,10 @@ ifeq ($(ALLOC),slab)
   CXXFLAGS += -DSLAB_NEW
 endif
 
+ifdef TEST_MODE
+  CXXFLAGS += -DTEST_MODE
+endif
+
 INCLUDES := -Iinclude
 
 LDFLAGS  := -T linker.ld -nostdlib
