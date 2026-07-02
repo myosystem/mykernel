@@ -95,7 +95,7 @@ void setup_cpu() {
     uart_print(g_pmc_ok ? "pmc ok\n" : "pmc off\n");
 }
 uint64_t get_cycles() {
-    return g_pmc_ok ? rdmsr(0x30A) : tsc_get();       // IA32_FIXED_CTR1
+    return g_pmc_ok ? rdmsr(0x30A) : rdtsc_get();       // IA32_FIXED_CTR1
 }
 extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     __asm__ __volatile__ ("cli");
@@ -167,9 +167,9 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
             part->init((*disks)[i]);
         }
     }
-    File* display_file = kernel_open_file("#0/DISPLAY.O");
-
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
+#ifndef TEST_MODE
+    File* display_file = kernel_open_file("#0/DISPLAY.O");
     Process* display = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_file_id());
     while (display_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         display->addCode((void*)readbuffer);                    //읽은 내용 옮기기
@@ -178,7 +178,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     delete display_file;
 	add_process(display->id);
     
-    /*
+#else
     File* test_file = kernel_open_file("#0/TEST.O");
     Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
@@ -187,7 +187,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     test->setHeap();
     delete test_file;
     add_process(test->id);
-    */
+#endif
     
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);
 	lapic_tsc_deadline_set_ms(10);
