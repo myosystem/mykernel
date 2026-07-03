@@ -200,6 +200,30 @@ File* FAT32::open_file(const char* path, uint64_t base_dir_id) {
     return nullptr; // ºó °æ·Î µî
 }
 
+uint64_t FAT32::get_dir_id(const char* path, uint64_t base_dir_id) {
+    uint32_t current_cluster = (base_dir_id == 0) ? this->bpb.RootCluster : (uint32_t)base_dir_id;
+    int path_idx = 0;
+    if (path[path_idx] == '/') path_idx++;
+    if (path[path_idx] == 0) return current_cluster;
+    char name_buf[256];
+    while (path[path_idx] != 0) {
+        int i = 0;
+        while (path[path_idx] != '/' && path[path_idx] != 0)
+            name_buf[i++] = path[path_idx++];
+        name_buf[i] = 0;
+        if (path[path_idx] == '/') path_idx++;
+        if (name_buf[0] == 0) continue;
+        FAT32_DirEntry entry;
+        uint64_t entry_offset;
+        bool found = find_entry(current_cluster, name_buf, &entry, &entry_offset);
+        if (!found) return (uint64_t)-1;
+        if (!(entry.Attr & 0x10)) return (uint64_t)-1;
+        current_cluster = ((uint32_t)entry.FstClusHI << 16) | entry.FstClusLO;
+        if (current_cluster == 0) current_cluster = this->bpb.RootCluster;
+    }
+    return current_cluster;
+}
+
 int FAT32::read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint32_t size) {
     uint32_t current_cluster = (uint32_t)start_cluster;
     uint32_t bytes_per_cluster = bpb.BytesPerSector * bpb.SectorsPerCluster;

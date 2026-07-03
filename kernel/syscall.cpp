@@ -9,6 +9,7 @@
 #include "mm/shm.h"
 #include "arch/lapic.h"
 #include "arch/handler.h"
+#include "filesys/file.h"
 extern uint64_t get_cycles();
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define GOP_PIXEL_FORMAT_RGBR     0   // PixelRedGreenBlueReserved8BitPerColor
@@ -424,6 +425,20 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		if (new_offset < 0) { frame->rax = (uint64_t)-1; break; }
 		if (file->seek((uint64_t)new_offset) < 0) { frame->rax = (uint64_t)-1; break; }
 		frame->rax = file->tell();
+		break;
+	}
+	case 35: // chdir
+	{
+		const char* path = (const char*)frame->rdi;
+		Partition* new_part = nullptr;
+		uint64_t   new_cluster = 0;
+		int ret = vfs_chdir(path, now_process->current_partition, now_process->cwd_cluster,
+		                    &new_part, &new_cluster);
+		if (ret == 0) {
+			now_process->current_partition = new_part;
+			now_process->cwd_cluster       = new_cluster;
+		}
+		frame->rax = ret;
 		break;
 	}
 	default:

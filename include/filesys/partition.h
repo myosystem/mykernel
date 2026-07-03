@@ -34,6 +34,7 @@ public:
     virtual int write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, uint64_t offset, const void* buffer, uint32_t size) { return -1; }
     virtual void list_directory(const char* path) {}
     virtual void close_file(void* file_handle) {}
+    virtual uint64_t get_dir_id(const char* path, uint64_t base_dir_id) { return (uint64_t)-1; }
 	void* operator new(size_t size) noexcept;
 	void operator delete(void* ptr);
     uint8_t flags;

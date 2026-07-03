@@ -13,6 +13,8 @@ PathResolveResult resolve_path(const char* path, Partition* cwd_partition);
 class File;
 File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id);
 File* kernel_open_file(const char* path);
+int vfs_chdir(const char* path, Partition* cwd_part, uint64_t cwd_id,
+              Partition** out_partition, uint64_t* out_cluster);
 class File : public NewObject<FILE_QUEUE_BASE,0x200,nullptr,nullptr> {
 protected:
 	Partition* partition;

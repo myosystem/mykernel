@@ -131,6 +131,25 @@ File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id) {
 File* kernel_open_file(const char* path) {
     return vfs_open(path, nullptr, 0);
 }
+
+int vfs_chdir(const char* path, Partition* cwd_part, uint64_t cwd_id,
+              Partition** out_partition, uint64_t* out_cluster) {
+    PathResolveResult res = resolve_path(path, cwd_part);
+    if (res.target_partition == nullptr) return -1;
+
+    uint64_t base_id = 0;
+    bool is_partition_changed = (cwd_part != nullptr) && (res.target_partition != cwd_part);
+    bool is_explicit_root = (res.relative_path != path);
+    if (!is_partition_changed && !is_explicit_root)
+        base_id = cwd_id;
+
+    uint64_t cluster = res.target_partition->get_dir_id(res.relative_path, base_id);
+    if (cluster == (uint64_t)-1) return -1;
+
+    *out_partition = res.target_partition;
+    *out_cluster   = cluster;
+    return 0;
+}
 int STDIn::read(void* buf, uint32_t len) {
     // 아직 구현 안됨 (키보드 버퍼에서 읽어오는 로직 필요)
     return -1;

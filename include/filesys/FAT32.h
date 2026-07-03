@@ -63,6 +63,7 @@ public:
     int write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, uint64_t offset, const void* buffer, uint32_t size) override;
     void list_directory(const char* path) override;
     void close_file(void* file_handle) override;
+    uint64_t get_dir_id(const char* path, uint64_t base_dir_id) override;
     uint32_t alloc_cluster();
     bool append_cluster(uint32_t last_cluster, uint32_t new_cluster);
 };
