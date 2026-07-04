@@ -2,6 +2,11 @@
 #include "util/memory.h"
 #include "util/util.h"
 #include "debug/log.h"
+#include "arch/lapic.h"
+#ifdef TEST_MODE
+uint64_t forkdbg[8] = {0,};
+uint64_t cowlog[16] = {0,};
+#endif
 #define PHYS_TO_HHDM(pa) ((void *)((uint64_t)(pa) + HHDM_BASE))
 // todo - GPT를 코어마다 따로 둘 수 있도록 나중에 페이지기반으로 코어개수만큼 생성해줘야함
 alignas(16) static uint8_t gdt[128];
@@ -451,10 +456,16 @@ bool Process::msg_empty() const {
     return msgq.isEmpty();
 }
 uint64_t Process::fork(context_t* ctx) {
+#ifdef TEST_MODE
+    uint64_t __f0 = rdtsc_get();
+#endif
     Process* child = new Process(0x1B, 0x23, this->current_partition, this->cwd_cluster, false);
     memcpy(child->kernel_stack, ctx, sizeof(context_t));
     ((context_t*)child->kernel_stack)->rax = 0; // 자식 프로세스에서는 fork의 반환값이 0
-	((context_t*)child->kernel_stack)->rip = ctx->rip; // 실행 위치는 부모와 동일
+	((context_t*)child->kernel_stack)->rip = ctx->rip;
+#ifdef TEST_MODE
+    uint64_t __f1 = rdtsc_get();
+#endif // 실행 위치는 부모와 동일
     if (!child->pallocator->copy(*pallocator, 0x400000, code_va_base - 0x400000)) { // 코드 복사
         delete child;
 		return ~0ULL; // 복사 실패 시 -1 반환
@@ -495,6 +506,9 @@ uint64_t Process::fork(context_t* ctx) {
         last_child_entry = new_entry;
         entry = entry->next;
     }
+	#ifdef TEST_MODE
+    uint64_t __f2 = rdtsc_get();
+#endif
 	for (size_t i = 0; i < open_files.get_size(); i++) {
         File* f = (File*)open_files[i];
         f->open();
@@ -503,6 +517,12 @@ uint64_t Process::fork(context_t* ctx) {
 	child->parent = this->id;
     this->children.push_back(child->id);
 	process_queue->enqueue(child->id);
+#ifdef TEST_MODE
+    uint64_t __f3 = rdtsc_get();
+    forkdbg[0] = __f1 - __f0;
+    forkdbg[1] = __f2 - __f1;
+    forkdbg[2] = __f3 - __f2;
+#endif
 	return child->id;
 }
 uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {

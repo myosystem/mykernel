@@ -266,6 +266,22 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		else if (frame->rdi == 7) {
 			frame->rax = get_cycles(); // guest exec cycles (PMU; tsc fallback)
 		}
+		else if (frame->rdi >= 8 && frame->rdi < 16) {
+#ifdef TEST_MODE
+			extern uint64_t forkdbg[8];
+			frame->rax = forkdbg[frame->rdi - 8];
+#else
+			frame->rax = 0;
+#endif
+		}
+		else if (frame->rdi >= 16 && frame->rdi < 32) {
+#ifdef TEST_MODE
+			extern uint64_t cowlog[16];
+			frame->rax = cowlog[frame->rdi - 16];
+#else
+			frame->rax = 0;
+#endif
+		}
 		else {
 			frame->rax = -1; // 반환값: 오류
 		}

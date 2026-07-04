@@ -8,6 +8,11 @@
 #include "kernel/process.h"
 #include "mm/shm.h"
 
+#include "arch/lapic.h"
+#ifdef TEST_MODE
+extern uint64_t forkdbg[8];
+extern uint64_t cowlog[16];
+#endif
 static uint8_t console[100 * 40] = { 0, }; // 디버깅용 콘솔 버퍼
 __attribute__((interrupt))
 void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
@@ -30,6 +35,10 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
         if (error_code & 1) { // Present인데 PF = 권한 위반
             uint64_t pte = virt_page_allocator->get_pte(cr2 & ~0xFFFULL);
             if (pte != ~0ULL && (pte & VirtPageAllocator::PTE_COW)) {
+#ifdef TEST_MODE
+                uint64_t __c0 = rdtsc_get();
+                uint64_t __copied = 0;
+#endif
                 // CoW 처리
                 uint64_t pa = pte & PTE_ADDR_MASK;
                 uint64_t saved_flags = (pte >> 60) & 0x7;
@@ -43,11 +52,19 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
                 else {
                     // 복사
                     uint64_t new_pa = phy_page_allocator->alloc_phy_page();
+#ifdef TEST_MODE
+                    __copied = 1;
+#endif
                     memcpy((void*)(new_pa + HHDM_BASE), (void*)(pa + HHDM_BASE), PageSize);
                     phy_page_allocator->put_page(pa);
 					virt_page_allocator->free_virt_page(cr2 & ~0xFFFULL);
                     virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, new_pa, new_flags);
                 }
+#ifdef TEST_MODE
+                forkdbg[4] += rdtsc_get() - __c0;
+                cowlog[forkdbg[5] & 15] = (cr2 & ~0xFFFULL) | __copied;
+                forkdbg[5]++;
+#endif
                 return;
             }
         }

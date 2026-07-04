@@ -103,7 +103,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     setup_cpu();
     init_tss(0, 0);
     init_interrupts();
-    //File* trampoline = kernel_open_file("#0/EFI/BOOT/signal.o");
+    File* trampoline = kernel_open_file("#0/EFI/BOOT/signal.o");
     init_process();
     
 	controllers = new (controller_buf) vector<Controller*>();
