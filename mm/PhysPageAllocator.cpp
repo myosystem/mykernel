@@ -1,6 +1,10 @@
 #include "mm/PhysPageAllocator"
 #include "mm/allocator"
 #include "debug/log.h"
+#include "arch/lapic.h"
+#ifdef TEST_MODE
+extern uint64_t forkdbg[8];
+#endif
 volatile uint32_t ppaspinv = 0;
 inline void _lockp() {
 	while (__atomic_test_and_set(&ppaspinv, __ATOMIC_ACQUIRE)) {
@@ -11,6 +15,9 @@ inline void _unlockp() {
 	__atomic_clear(&ppaspinv, __ATOMIC_RELEASE);
 }
 uint64_t PhysPageAllocator::alloc_phy_page() {
+#ifdef TEST_MODE
+    uint64_t __p0 = rdtsc_get();
+#endif
     _lockp();
     for (uint64_t i = 0; i < (total_pages + 63) / 64; i++) {
         if (bitmap[i] != 0xFFFFFFFFFFFFFFFF) { // 아직 빈 페이지가 있음
@@ -18,7 +25,10 @@ uint64_t PhysPageAllocator::alloc_phy_page() {
                 if (!(bitmap[i] & (1ULL << j))) { // 빈 페이지 발견
                     bitmap[i] |= (1ULL << j);
                     used_pages++;
-					refcount[i * 64 + j] = 1; // 참조 카운트 초기화
+					refcount[i * 64 + j] = 1;
+#ifdef TEST_MODE
+                    forkdbg[3] += rdtsc_get() - __p0; forkdbg[6]++;
+#endif // 참조 카운트 초기화
                     _unlockp();
                     return (i * 64 + j) * 4096;
                 }
