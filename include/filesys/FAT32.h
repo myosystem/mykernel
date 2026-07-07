@@ -64,6 +64,7 @@ public:
     void list_directory(const char* path) override;
     void close_file(void* file_handle) override;
     uint64_t get_dir_id(const char* path, uint64_t base_dir_id) override;
+    int getdents64(uint64_t dir_id, uint64_t start_idx, void* buf, uint32_t buf_size) override;
     uint32_t alloc_cluster();
     bool append_cluster(uint32_t last_cluster, uint32_t new_cluster);
 };

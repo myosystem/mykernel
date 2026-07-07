@@ -146,6 +146,9 @@ File* FAT32::open_file(const char* path, uint64_t base_dir_id) {
 	uint32_t current_cluster = (base_dir_id == 0) ? this->bpb.RootCluster : (uint32_t)base_dir_id;
     int path_idx = 0;
     if (path[path_idx] == '/') path_idx++;
+    if (path[path_idx] == 0) {
+        return new DirFile(this, current_cluster);
+    }
     char name_buf[256];
     while (path[path_idx] != 0) {
 

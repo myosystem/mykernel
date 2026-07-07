@@ -35,6 +35,7 @@ public:
     virtual void list_directory(const char* path) {}
     virtual void close_file(void* file_handle) {}
     virtual uint64_t get_dir_id(const char* path, uint64_t base_dir_id) { return (uint64_t)-1; }
+    virtual int getdents64(uint64_t dir_id, uint64_t start_idx, void* buf, uint32_t buf_size) { return -1; }
 	void* operator new(size_t size) noexcept;
 	void operator delete(void* ptr);
     uint8_t flags;
