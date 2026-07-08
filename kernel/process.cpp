@@ -157,8 +157,10 @@ Process::Process(uint64_t cs, uint64_t ss, Partition* partition,
     }
 }
 Process::~Process() {
-    for (size_t i = 0; i < open_files.get_size(); i++)
-        ((File*)open_files[i])->close();
+    for (size_t i = 0; i < open_files.get_size(); i++) {
+		File* f = (File*)open_files[i];
+		if (f) f->close();
+    }
 
     pallocator->free_all_low_pages(); // 하위 날리면 cr3 하위도 깨끗해짐
 
@@ -571,9 +573,10 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
 
     // 4. open_files 정리 (stdin/stdout/stderr 유지)
 	while (open_files.get_size() > 3) {
-		File* f = (File*)open_files[3];
-		f->close();
-		open_files.erase(3);
+		size_t last = open_files.get_size() - 1;
+		File* f = (File*)open_files[last];
+		if (f) f->close();
+		open_files.erase(last);
 	}
 
     // 5. 커널 스택 프레임 리셋
