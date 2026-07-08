@@ -4,12 +4,12 @@
 #include "filesys/file.h"
 #include "filesys/partition.h"
 struct FAT32_BPB {
-    uint8_t  jmpBoot[3];        // 점프 명령
+    uint8_t  jmpBoot[3];        // 점프 코드
     char     OEMName[8];        // OEM 이름
     uint16_t BytesPerSector;    // 섹터 크기
     uint8_t  SectorsPerCluster; // 클러스터당 섹터 수
-    uint16_t ReservedSectorCount; // 예약 섹터 수 (FAT 시작까지)
-    uint8_t  NumFATs;           // FAT 테이블 개수
+    uint16_t ReservedSectorCount; // 예약 섹터 수 (FAT 시작기준)
+    uint8_t  NumFATs;           // FAT 테이블 수
     uint16_t RootEntryCount;    // FAT12/16용, FAT32는 0
     uint16_t TotalSectors16;    // 16비트 전체 섹터 수, FAT32는 0
     uint8_t  Media;             // 미디어 타입
@@ -34,7 +34,7 @@ struct FAT32_BPB {
 } __attribute__ ((packed));
 
 struct FAT32_DirEntry {
-    char     Name[8];       // 8 파일명
+    char     Name[8];       // 8자 파일명
 	char     ext[3];        // 확장자
     uint8_t  Attr;           // 속성 (0x10=디렉토리, 0x20=파일)
     uint8_t  NTRes;

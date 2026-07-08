@@ -6,7 +6,7 @@
 #define FILE_QUEUE_BASE 0xFFFF838000000000ULL
 #define EOF (-1)
 struct PathResolveResult {
-	Partition* target_partition; // 찾은 파티션 객체
+	Partition* target_partition; // 타겟 파티션 객체
 	const char* relative_path;   // 파티션 내부 경로 (예: "System/Kernel.elf")
 };
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition);

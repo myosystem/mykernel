@@ -175,8 +175,9 @@ File* FAT32::open_file(const char* path, uint64_t base_dir_id) {
         if (is_last_token) {
             // [도착] 
             if (entry.Attr & 0x10) {
-                // 디렉토리를 open 하려고 함 -> 현재는 nullptr (나중에 opendir 지원)
-                return nullptr;
+                uint32_t dir_clus = ((uint32_t)entry.FstClusHI << 16) | entry.FstClusLO;
+                if (dir_clus == 0) dir_clus = bpb.RootCluster;
+                return new DirFile(this, dir_clus);
             }
 
             // 파일 발견! -> File 객체 생성
@@ -386,4 +387,128 @@ bool FAT32::append_cluster(uint32_t last_cluster, uint32_t new_cluster) {
         &val,
         sizeof(uint32_t)
     );
+}
+struct FAT32_LFN {
+    uint8_t  order;
+    uint16_t name1[5];
+    uint8_t  attr;
+    uint8_t  lfn_type;
+    uint8_t  checksum;
+    uint16_t name2[6];
+    uint16_t fstClus;
+    uint16_t name3[2];
+} __attribute__((packed));
+
+#define MY_DIRENT_HDR 13
+#define DT_REG_FAT 0
+#define DT_DIR_FAT 1
+
+int FAT32::getdents64(uint64_t dir_id, uint64_t start_idx, void* buf, uint32_t buf_size) {
+    uint32_t current_clus = (uint32_t)dir_id;
+    uint8_t* out = (uint8_t*)buf;
+    uint32_t written = 0;
+    uint64_t entry_idx = 0;
+    char lfn_buf[256];
+    bool has_lfn = false;
+    bool done = false;
+    for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+
+    while (!done && current_clus < 0x0FFFFFF8) {
+        int entries_per_cluster = bpb.BytesPerSector * bpb.SectorsPerCluster / 32;
+        uint64_t cluster_offset = (uint64_t)(bpb.ReservedSectorCount
+            + (uint64_t)bpb.NumFATs * bpb.FATSize32
+            + (uint64_t)(current_clus - 2) * bpb.SectorsPerCluster)
+            * bpb.BytesPerSector;
+
+        for (int i = 0; i < entries_per_cluster && !done; i++) {
+            FAT32_DirEntry entry;
+            partitioner->read((Partitioner::PartitionInfo&)data,
+                cluster_offset + (uint64_t)i * 32, &entry, 32);
+
+            if (entry.Name[0] == 0x00) { done = true; break; }
+
+            if ((uint8_t)entry.Name[0] == 0xE5) {
+                has_lfn = false;
+                for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+                continue;
+            }
+
+            if (entry.Attr == 0x0F) {
+                FAT32_LFN* lfn = (FAT32_LFN*)&entry;
+                uint8_t seq = lfn->order & 0x3F;
+                if (seq == 0 || seq > 20) continue;
+                int base = (int)(seq - 1) * 13;
+                for (int j = 0; j < 5; j++) {
+                    uint16_t c = lfn->name1[j];
+                    if (c == 0 || c == 0xFFFF) break;
+                    int pos = base + j;
+                    if (pos >= 0 && pos < 255)
+                        lfn_buf[pos] = (c < 0x80) ? (char)c : '?';
+                }
+                for (int j = 0; j < 6; j++) {
+                    uint16_t c = lfn->name2[j];
+                    if (c == 0 || c == 0xFFFF) break;
+                    int pos = base + 5 + j;
+                    if (pos >= 0 && pos < 255)
+                        lfn_buf[pos] = (c < 0x80) ? (char)c : '?';
+                }
+                for (int j = 0; j < 2; j++) {
+                    uint16_t c = lfn->name3[j];
+                    if (c == 0 || c == 0xFFFF) break;
+                    int pos = base + 11 + j;
+                    if (pos >= 0 && pos < 255)
+                        lfn_buf[pos] = (c < 0x80) ? (char)c : '?';
+                }
+                has_lfn = true;
+                continue;
+            }
+
+            if (entry.Name[0] == '.') {
+                has_lfn = false;
+                for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+                continue;
+            }
+
+            if (entry_idx < start_idx) {
+                entry_idx++;
+                has_lfn = false;
+                for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+                continue;
+            }
+
+            char name_83[13];
+            int t = 0;
+            if (!has_lfn) {
+                for (int j = 0; j < 8 && entry.Name[j] != ' '; j++)
+                    name_83[t++] = entry.Name[j];
+                if (entry.ext[0] != ' ') {
+                    name_83[t++] = '.';
+                    for (int j = 0; j < 3 && entry.ext[j] != ' '; j++)
+                        name_83[t++] = entry.ext[j];
+                }
+                name_83[t] = 0;
+            }
+            const char* final_name = has_lfn ? lfn_buf : name_83;
+
+            uint32_t namelen = 0;
+            while (final_name[namelen]) namelen++;
+
+            uint32_t reclen = (uint32_t)(MY_DIRENT_HDR + namelen + 1);
+            if (written + reclen > buf_size) { done = true; break; }
+
+            *(uint64_t*)(out + written)     = (uint64_t)reclen;
+            *(uint8_t*) (out + written + 8) = (entry.Attr & 0x10) ? DT_DIR_FAT : DT_REG_FAT;
+            *(uint32_t*)(out + written + 9) = entry.FileSize;
+            char* dst = (char*)(out + written + 13);
+            for (uint32_t j = 0; j <= namelen; j++) dst[j] = final_name[j];
+
+            written += reclen;
+            entry_idx++;
+            has_lfn = false;
+            for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+        }
+        if (!done)
+            current_clus = get_next_cluster_from_fat(current_clus);
+    }
+    return (int)written;
 }

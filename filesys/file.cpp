@@ -161,3 +161,32 @@ int STDOut::write(const void* buf, uint32_t len) {
     }
     return len;
 }
+int DirFile::read(void* buf, uint32_t len) {
+    if (!partition) return -1;
+    uint8_t* out = (uint8_t*)buf;
+    uint32_t total = 0;
+    while (total < len) {
+        if (entry_consumed >= entry_bytes) {
+            int n = partition->getdents64(file_id, current_offset, entry_buf, sizeof(entry_buf));
+            if (n <= 0) break;
+            entry_bytes = (uint16_t)n;
+            entry_consumed = 0;
+            uint8_t* p = entry_buf;
+            uint16_t rem = (uint16_t)n;
+            while (rem >= 8) {
+                uint64_t reclen = *(uint64_t*)p;
+                if (reclen == 0 || reclen > (uint64_t)rem) break;
+                p += (uint32_t)reclen;
+                rem -= (uint16_t)reclen;
+                current_offset++;
+            }
+        }
+        uint32_t avail = entry_bytes - entry_consumed;
+        uint32_t to_copy = (len - total) < avail ? (len - total) : avail;
+        uint8_t* src = entry_buf + entry_consumed;
+        for (uint32_t i = 0; i < to_copy; i++) out[total + i] = src[i];
+        total += to_copy;
+        entry_consumed += (uint16_t)to_copy;
+    }
+    return (int)total;
+}
