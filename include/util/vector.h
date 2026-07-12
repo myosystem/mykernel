@@ -3,6 +3,7 @@
 #include "util/size.h"
 #include "mm/allocator"
 #include "debug/log.h"
+#include "util/util.h"
 template <typename T>
 class vector {
 private:
@@ -77,7 +78,7 @@ public:
             new_index = 0;
         }
 
-        *((T*)((uint8_t*)back_page + new_index + 8)) = item;
+        ::new ((void*)((uint8_t*)back_page + new_index + 8)) T(item);
         new_index += aligned_size;
         arr_size++;
     }
