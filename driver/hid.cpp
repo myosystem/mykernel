@@ -264,9 +264,9 @@ void HIDDevice::hid_event(void* ei, uint64_t st, uint64_t ctrl) {
 			//uart_print("Mouse Event: abs_x="); uart_print_hex(abs_x); uart_print(" abs_y="); uart_print_hex(abs_y); uart_print("\n");
         }
         else {
-            cursor_x -= dx;
-            cursor_y -= dy;
-            //uart_print("Mouse Event: dx="); uart_print_hex(dx); uart_print(" dy="); uart_print_hex(dy); uart_print("\n");
+            cursor_x += dx;
+            cursor_y += dy;
+            //uart_print("Mouse Event: dx="); uart_print(dx); uart_print(" dy="); uart_print(dy); uart_print("\n");
         }
 
         if (cursor_x < 0) cursor_x = 0;
