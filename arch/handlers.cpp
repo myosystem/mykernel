@@ -8,23 +8,45 @@
 #include "util/memory.h"
 #include "kernel/process.h"
 #include "kernel/timer_handler.h"
+#include "kernel/keyboard.h"
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
 //todo - 종속 부분과 비종속부분 분리 후 새로운 파일로 구분
+// PS/2 Set-1 scancode -> key value (ASCII for printables, KEY_* for special)
+static const uint32_t sc1[] = {
+    0, KEY_ESC, '1','2','3','4','5','6','7','8','9','0','-','=', '\b','\t',
+    'q','w','e','r','t','y','u','i','o','p','[',']','\n', KEY_LCTRL, 'a','s',
+    'd','f','g','h','j','k','l',';','\'','`', KEY_LSHIFT, '\\','z','x','c','v',
+    'b','n','m',',','.','/', KEY_RSHIFT, '*', KEY_LALT, ' ',
+};
+static bool kbd_ext = false;
 __attribute__((interrupt))
 void keyboard_handler(interrupt_frame_t* frame) {
-    uint8_t scancode = inb(0x60);
-	uart_print("Key pressed: ");
-	uart_print("0x");
-	uart_print_hex2(scancode);
-    uart_print("\n");
-    /*
-    if (console[0] == 0) {
-        char raw_frame[24];
-        memcpy(raw_frame, frame, 24);
-        bytes_to_hex_string(raw_frame, 24, (char*)console);
+    (void)frame;
+    uint8_t sc = inb(0x60);
+    uart_print("[kbd] 0x"); uart_print_hex2(sc); uart_putc('\n');
+    if (sc == 0xE0) { kbd_ext = true; lapic_eoi(); return; }
+    bool released = (sc & 0x80) != 0;
+    sc &= 0x7F;
+    uint32_t key = 0;
+    if (kbd_ext) {
+        switch (sc) {
+            case 0x48: key = KEY_UP;    break;
+            case 0x50: key = KEY_DOWN;  break;
+            case 0x4B: key = KEY_LEFT;  break;
+            case 0x4D: key = KEY_RIGHT; break;
+            case 0x1D: key = KEY_RCTRL; break;
+            case 0x38: key = KEY_RALT;  break;
+            default:   key = 0;         break;
+        }
+        kbd_ext = false;
+    } else if (sc < sizeof(sc1) / sizeof(sc1[0])) {
+        key = sc1[sc];
     }
-    */
+    if (key) {
+        if (released) key_release(key);
+        else          key_press(key);
+    }
     lapic_eoi();
 }
 static uint8_t mouse_cycle = 0;
@@ -165,6 +187,20 @@ __attribute__((interrupt))
 void none_handler(interrupt_frame_t* frame) {
     __asm__ __volatile__("hlt");
     lapic_eoi();
+}
+__attribute__((interrupt))
+void double_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
+    uart_print("Double Fault");
+    uart_print("\nRIP=");
+    uart_print_hex(frame->rip);
+    uart_print("\nError Code=");
+    uart_print_hex(error_code);
+    uart_print("\nProcess id=");
+    uart_print_hex(now_process->id);
+    uart_print("\n");
+    while (1) {
+        __asm__ __volatile__("hlt");
+    }
 }
 __attribute__((interrupt))
 void general_protection_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
