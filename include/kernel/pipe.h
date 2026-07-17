@@ -4,6 +4,9 @@
 #include "kernel/process.h"
 #include "util/queue.h"
 #include "util/util.h"
+#define PIPE_NONBLOCK 0x2
+#define PIPE_NOTIFY 0x4
+#define MSG_PIPE_DATA 0x1001
 class Pipe;
 class InPipe : public File{
 private:
@@ -14,6 +17,7 @@ public:
 	int write(const void* buf, uint32_t len) override {
 		return -1;
 	}
+	void poll_register(uint64_t pid, uint64_t opts) override;
     void close();
 	friend Pipe;
 };
@@ -26,6 +30,7 @@ public:
 		return -1;
 	}
     int write(const void* buf, uint32_t len) override;
+    void poll_register(uint64_t pid, uint64_t opts) override;
     void close();
 	friend Pipe;
 };
@@ -59,6 +64,7 @@ public:
 
             if (can_read == 0) {
                 if (out == nullptr) return len - to_read; // EOF
+                if (in && (in->state & PIPE_NONBLOCK)) return (to_read == len) ? -1 : (int)(len - to_read);
                 in_blocking.enqueue(now_process->id);
                 simple_wait();
                 continue;
@@ -86,6 +92,7 @@ public:
     }
 
     int write(const void* src, uint32_t len) override {
+        bool was_empty = (read_ptr == write_ptr);
         uint64_t to_write = len;
         while (to_write > 0) {
             uint64_t rp = read_ptr;
@@ -94,6 +101,7 @@ public:
 
             if (can_write == 0) {
                 if (in == nullptr) return -1; // reader 없음 (SIGPIPE 자리)
+                if (out && (out->state & PIPE_NONBLOCK)) return (to_write == len) ? -1 : (int)(len - to_write);
                 out_blocking.enqueue(now_process->id);
                 simple_wait();
                 continue;
@@ -114,9 +122,10 @@ public:
             write_ptr = (wp + now_write) % PageSize;
             to_write -= now_write;
 
-            while (in_blocking.get_size() > 0)
+            if (in && !(in->state & PIPE_NONBLOCK)) while (in_blocking.get_size() > 0)
                 add_process(in_blocking.dequeue());
         }
+        if (was_empty && in && (in->state & PIPE_NOTIFY) && in_blocking.get_size() > 0) { Process* np = GetProcess(*in_blocking.peek_back()); if (np) { msg_t m = {}; m.type = MSG_PIPE_DATA; np->msg_recv(m, false); } }
         return len;
     }
 	friend InPipe;
