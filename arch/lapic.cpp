@@ -61,10 +61,15 @@ void enable_cursor() {
 }
 // PS/2 컨트롤러에서 키보드 활성화
 void enable_keyboard() {
-    outb(0x64, 0xAE);  // 키보드 활성화
-    while (inb(0x64) & 0x01) {
-        inb(0x60); // 남아있는 ACK나 쓰레기 데이터를 싹 비움
-    }
+    outb(0x64, 0xAE);              // enable keyboard port
+    outb(0x64, 0x20);              // request controller config byte
+    for (int i = 0; i < 100000 && !(inb(0x64) & 0x01); i++);
+    uint8_t ccb = inb(0x60);
+    ccb |= 0x41;                   // keyboard IRQ (bit0) + scancode translation to Set 1 (bit6)
+    ccb &= ~0x10;                  // enable keyboard clock
+    outb(0x64, 0x60);
+    outb(0x60, ccb);
+    while (inb(0x64) & 0x01) inb(0x60); // flush
 }
 // Local APIC 활성화
 void enable_apic() {
