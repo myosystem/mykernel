@@ -60,7 +60,13 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		if (frame->rdi == 0) { // open
 			const char* path = (const char*)frame->rsi;
+			uint64_t flags = frame->rdx;
 			File* file = vfs_open(path, now_process->current_partition, now_process->cwd_cluster);
+			if (file == nullptr && (flags & 0x40)) {
+				file = vfs_create(path, now_process->current_partition, now_process->cwd_cluster);
+			}
+			if (file != nullptr && (flags & 0x200)) file->truncate();
+			if (file != nullptr && (flags & 0x10000) && !file->is_directory()) { file->close(); file = nullptr; }
 			if (file != nullptr) {
 				uart_print("Opened file: "); uart_print(path); uart_print("\n");
 				uint64_t fd = now_process->open_files.push_back(file);
@@ -111,6 +117,25 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 				frame->rax = -1;
 			}
 		}
+		else if (frame->rdi == 3) { // mkdir
+			const char* mpath = (const char*)frame->rsi;
+			frame->rax = vfs_mkdir(mpath, now_process->current_partition, now_process->cwd_cluster);
+		}
+		else if (frame->rdi == 4) { // unlink
+			const char* upath = (const char*)frame->rsi;
+			frame->rax = vfs_unlink(upath, now_process->current_partition, now_process->cwd_cluster);
+		}
+		else if (frame->rdi == 5) { // rmdir
+			const char* rpath = (const char*)frame->rsi;
+			frame->rax = vfs_rmdir(rpath, now_process->current_partition, now_process->cwd_cluster);
+		}
+		else if (frame->rdi == 6) { // poll_register (nonblock + notify self)
+			uint64_t pfd = frame->rsi;
+			void*& pslot = now_process->open_files[pfd];
+			File* pf = (File*)pslot;
+			if (pf) { pf->poll_register(now_process->id, frame->rdx); frame->rax = 0; }
+			else frame->rax = -1;
+		}
 		break;
 	}
 	case 3: // getpid
@@ -134,7 +159,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 			target_process->msg_recv(*msg, is_block);
 			frame->rax = 0; // 반환값: 성공
 		}
-		else if(frame->rdi == 1) { // pop
+		else if (frame->rdi == 1) { // pop
 			msg_t* out_msg = (msg_t*)frame->rsi;
 			if (now_process->msg_pop(out_msg)) {
 				frame->rax = 0; // 반환값: 성공
@@ -143,16 +168,16 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 				frame->rax = -1; // 반환값: 오류
 			}
 		}
-		else if(frame->rdi == 2) { // empty
+		else if (frame->rdi == 2) { // empty
 			frame->rax = now_process->msg_empty() ? 1 : 0; // 반환값: 메시지 큐가 비어있으면 1, 아니면 0
 		}
 		else if (frame->rdi == 0xFFFFFFFFFFFFFFFF) { // broadcast
 			msg_t* msg = (msg_t*)frame->rsi;
 			msg->sender_pid = now_process->id; // 보낸이 PID 자동 설정
 			msg->timestamp = tsc_get();
-			for(size_t i = 0; i < get_max_process_id(); i++) {
+			for (size_t i = 0; i < get_max_process_id(); i++) {
 				Process* target_process = GetProcess(i);
-				if(target_process && target_process->id != now_process->id) {
+				if (target_process && target_process->id != now_process->id) {
 					target_process->msg_recv(*msg, false);
 				}
 			}
@@ -165,7 +190,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	}
 	case 5: // Graphics
 	{
-		if(frame->rdi == 0) { // Get Framebuffer Info
+		if (frame->rdi == 0) { // Get Framebuffer Info
 			Ginfo* ginfo = (Ginfo*)frame->rsi;
 			ginfo->width = bootinfo->framebufferWidth;
 			ginfo->height = bootinfo->framebufferHeight;
@@ -349,6 +374,26 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		uart_print("\n");
 		break;
 	}
+	case 29: // console
+	{
+		if (frame->rdi == 0) { // set
+			uint64_t pid = frame->rsi;
+			Process* target_process = GetProcess(pid);
+			if (target_process == nullptr) {
+				frame->rax = -1; // 반환값: 오류 (존재하지 않는 프로세스)
+				break;
+			}
+			now_process->console_pid = pid;
+			frame->rax = 0; // 반환값: 성공
+		}
+		else if (frame->rdi == 1) { // get
+			frame->rax = now_process->console_pid; // 반환값: 콘솔 프로세스 ID
+		}
+		else {
+			frame->rax = -1; // 반환값: 오류 (알 수 없는 콘솔 명령)
+		}
+		break;
+	}
 	case 30: // fork
 	{
 		frame->rax = now_process->fork(frame);
@@ -412,18 +457,21 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	case 50: // exit
 	{
 		Process* exiting = now_process;
-		now_process = next_process();
 		exiting->time_slice = frame->rdi; // 리턴값 남는곳에 저장
 		exiting->~Process();
 		if (exiting->parent == (uint64_t)-1) {
 			Process::operator delete(exiting);
 		}
+		now_process = next_process();
 		now_process->run_process();
 		break;
 	}
-	case -1ull:
+	case -1ull: // power
 	{
-		shutdown();
+		if (frame->rdi == 0)
+			shutdown();
+		if (frame->rdi == 1)
+			reboot();
 		frame->rax = -1; // 실패
 		break;
 	}
@@ -434,7 +482,7 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		int64_t offset = (int64_t)frame->rsi;
 		int whence = (int)frame->rdx;
 		int64_t new_offset;
-		if      (whence == 0) new_offset = offset;
+		if (whence == 0) new_offset = offset;
 		else if (whence == 1) new_offset = (int64_t)file->tell() + offset;
 		else if (whence == 2) new_offset = (int64_t)file->size() + offset;
 		else { frame->rax = (uint64_t)-1; break; }
@@ -447,18 +495,4 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		const char* path = (const char*)frame->rdi;
 		Partition* new_part = nullptr;
-		uint64_t   new_cluster = 0;
-		int ret = vfs_chdir(path, now_process->current_partition, now_process->cwd_cluster,
-		                    &new_part, &new_cluster);
-		if (ret == 0) {
-			now_process->current_partition = new_part;
-			now_process->cwd_cluster       = new_cluster;
-		}
-		frame->rax = ret;
-		break;
-	}
-	default:
-		frame->rax = -1; // 반환값: 알 수 없는 시스템 콜
-		break;
-	}
-}
+		uint64_t   new_
