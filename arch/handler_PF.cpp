@@ -13,7 +13,7 @@
 extern uint64_t forkdbg[8];
 extern uint64_t cowlog[16];
 #endif
-static uint8_t console[100 * 40] = { 0, }; // 디버깅용 콘솔 버퍼
+extern bool booting;
 __attribute__((interrupt))
 void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     uint64_t rsp;
@@ -25,7 +25,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
     if (!(error_code & (1ull << 2ull))) {
         uint64_t pml4_entry = (cr2 >> 39) & 0x1FF;
-        if (256 <= pml4_entry && pml4_entry <= 268) {
+        if (256 <= pml4_entry && pml4_entry <= 270) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
             memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);      // Todo : 새로운 new방식 특성상 이거 필요없다 싹다 교체하고 바꿔야될듯
             return;
@@ -118,15 +118,10 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     uart_print_hex(frame->rip);
     uart_print("\nError Code=");
     uart_print_hex(error_code);
-    __asm__ __volatile__("hlt");
+    if (booting)
+        __asm__ __volatile__("hlt");
     uart_print("\nProcess id=");
     uart_print_hex(now_process->id);
     uart_print("\n");
-    char raw_stack[16];
-    memcpy(raw_stack, (void*)&cr2, 8);
-    memcpy(raw_stack + 8, (void*)&error_code, 8);
-    bytes_to_hex_string(raw_stack, sizeof(raw_stack), (char*)console);
-    console[3 * 17] = 'P';
-    console[3 * 17 + 1] = 'F';
     __asm__ __volatile__("hlt");
 }

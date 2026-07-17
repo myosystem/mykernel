@@ -6,6 +6,7 @@
 #include "debug/log.h"
 #include "arch/idt.h"
 #include "arch/msr.h"
+#include "arch/acpi.h"
 #include "arch/ioapic.h"
 #include "arch/lapic.h"
 #include "arch/handler.h"
@@ -34,6 +35,8 @@
 //266 xhci queue                0xFFFF850000000000
 //267 protocol queue	        0xFFFF858000000000
 //268 HID queue                 0xFFFF860000000000
+//269 AML node pool             0xFFFF868000000000
+//270 AML object pool           0xFFFF870000000000
 //509 mmio
 //510 HHDM
 //511 kernel + bootdata + init stack
@@ -49,16 +52,17 @@ void init_apic() {
     setup_lapic_timer_tsc_deadline(32);
     ioapic_set_redirection(1, 0x21, 0);
     ioapic_set_redirection(12, 0x2C, 0);
-//    enable_cursor();
-//	enable_keyboard();
+//    enable_cursor();  // PS/2 mouse absent on VMware -> would hang; mouse is xHCI
+	enable_keyboard();
 }
 
 void init_interrupts() {
 	init_allocators(bootinfo->physbm, bootinfo->refcount, bootinfo->physbm_size);
     init_apic();
     for (int i = 0; i < IDT_SIZE; i++) {
-        set_idt_gate(i, (uint64_t)none_handler, 0x08, 0x88);
+        set_idt_gate(i, (uint64_t)none_handler, 0x08, 0x8E);
     }
+    set_idt_gate(8, (uint64_t)double_fault_handler, 0x08, 0x8E);
 	set_idt_gate(13, (uint64_t)general_protection_fault_handler, 0x08, 0x8E);
 	set_idt_gate(14, (uint64_t)page_fault_handler, 0x08, 0x8E);
 	set_idt_gate(12, (uint64_t)stack_segment_fault_handler, 0x08, 0x8E);
@@ -103,6 +107,13 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     setup_cpu();
     init_tss(0, 0);
     init_interrupts();
+    acpi_dump_rsdp();
+    acpi_dump_xsdt();
+    acpi_dump_fadt();
+    acpi_dump_dsdt();
+    acpi_aml_probe();
+    acpi_build_namespace();
+    acpi_dump_namespace();
     File* trampoline = kernel_open_file("#0/EFI/BOOT/signal.o");
     init_process();
     
@@ -170,7 +181,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
 	uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
 #ifndef TEST_MODE
     File* display_file = kernel_open_file("#0/DISPLAY.O");
-    Process* display = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, display_file->get_file_id());
+    Process* display = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, 0);
     while (display_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         display->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
@@ -180,7 +191,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     
 #else
     File* test_file = kernel_open_file("#0/TEST.O");
-    Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, test_file->get_file_id());
+    Process* test = new Process(0x1B, 0x23, (Partition*)PARTITION_QUEUE_BASE, 0);
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         test->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
