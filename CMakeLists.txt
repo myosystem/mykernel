@@ -1,34 +1,19 @@
-file(GLOB_RECURSE KERNEL_SRCS
-    arch/*.cpp
-    debug/*.cpp
-    driver/*.cpp
-    filesys/*.cpp
-    init/*.cpp
-    kernel/*.cpp
-    mm/*.cpp
-    util/*.cpp
-    include/*.h
+# mykernel 아래 모든 .cpp 재귀 수집 (stub/ 은 .S 라 제외). 새 디렉터리 추가돼도 자동 포함.
+# CONFIGURE_DEPENDS: 파일 추가/삭제 시 빌드에서 자동 재-glob.
+file(GLOB_RECURSE KERNEL_SRCS CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.h
 )
+list(FILTER KERNEL_SRCS EXCLUDE REGEX "/stub/")
 
 add_executable(mykernel ${KERNEL_SRCS})
 
 target_include_directories(mykernel PRIVATE include)
 
-target_compile_options(mykernel PRIVATE
-    -m64
-    -ffreestanding
-    -fno-rtti
-    -fno-exceptions
-    -fno-zero-initialized-in-bss
-    -fno-common
-    -masm=intel
-    -mno-sse -mno-sse2 -mno-mmx -mno-3dnow -mno-80387
-    -msoft-float
-    -mno-red-zone
-    -Werror
-    $<$<CONFIG:Debug>:-g;-O0>
-    $<$<CONFIG:Release>:-O2>
-)
+# 공용 freestanding 플래그는 myos_flags(cmake/freestanding.cmake)로 일원화.
+# 커널 전용 플래그(-Werror)만 여기서 추가.
+target_link_libraries(mykernel PRIVATE myos_flags)
+
+target_compile_options(mykernel PRIVATE -Werror)
 
 target_link_options(mykernel PRIVATE
     -nostdlib
@@ -73,4 +58,9 @@ foreach(STUB_SRC ${STUB_SRCS})
         COMMAND ${CMAKE_COMMAND} -E copy ${STUB_OBJ} ${BOOT_EFI_DIR}/${STUB_NAME}.o
         VERBATIM
     )
+
+    list(APPEND STUB_TARGETS stub_${STUB_NAME})
 endforeach()
+
+# makeimg 가 의존할 수 있도록 stub 타깃들을 하나로 집계
+add_custom_target(kernel_stubs DEPENDS ${STUB_TARGETS})
