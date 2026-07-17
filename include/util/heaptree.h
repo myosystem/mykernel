@@ -42,6 +42,7 @@ class HeapTree {
 		}
 	}
 public:
+	T nullresult{};
 	HeapTree(void* arr) : data((T*)arr), size(0) {
 	}
 	~HeapTree() {
@@ -85,7 +86,7 @@ public:
 		return false;
 	}
 	const T& top() const {
-		if (size == 0) return *(T*)0;
+		if (size == 0) return nullresult;
 		return data[0];
 	}
 	bool isEmpty() const {
