@@ -12,6 +12,10 @@ struct PathResolveResult {
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition);
 class File;
 File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id);
+File* vfs_create(const char* path, Partition* cwd_part, uint64_t cwd_id);
+int vfs_mkdir(const char* path, Partition* cwd_part, uint64_t cwd_id);
+int vfs_unlink(const char* path, Partition* cwd_part, uint64_t cwd_id);
+int vfs_rmdir(const char* path, Partition* cwd_part, uint64_t cwd_id);
 File* kernel_open_file(const char* path);
 int vfs_chdir(const char* path, Partition* cwd_part, uint64_t cwd_id,
               Partition** out_partition, uint64_t* out_cluster);
@@ -39,6 +43,8 @@ public:
 	uint64_t get_file_id() const { return file_id; }
 	Partition* get_partition() const { return partition; }
 	uint64_t get_refcount() const { return refcount; }
+	void truncate();
+	virtual void poll_register(uint64_t pid, uint64_t opts) {}
 };
 class DirFile : public File {
 	uint8_t  entry_buf[300];

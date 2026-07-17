@@ -98,7 +98,20 @@ uint32_t FAT32::get_next_cluster_from_fat(uint32_t current_cluster) {
     return next_cluster;
 }
 bool FAT32::find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* out_entry, uint64_t* out_offset) {
+    // "." => current dir; ".." at root => root. (root has no real . / .. entries -> synthesize)
+    if ((name[0] == '.' && name[1] == 0) ||
+        (name[0] == '.' && name[1] == '.' && name[2] == 0 && dir_cluster == this->bpb.RootCluster)) {
+        memset(out_entry, 0, sizeof(FAT32_DirEntry));
+        out_entry->Attr = 0x10;
+        out_entry->FstClusHI = (uint16_t)(dir_cluster >> 16);
+        out_entry->FstClusLO = (uint16_t)(dir_cluster & 0xFFFF);
+        if (out_offset) *out_offset = 0;
+        return true;
+    }
     uint32_t current_clus = dir_cluster;
+    char lfn_buf[256];
+    bool has_lfn = false;
+    for (int lk = 0; lk < 256; lk++) lfn_buf[lk] = 0;
 
     // 디렉토리도 여러 클러스터에 걸쳐 있을 수 있음 (체인 추적)
     while (current_clus < 0x0FFFFFF8) { // EOC(End of Chain) 체크
@@ -120,14 +133,34 @@ bool FAT32::find_entry(uint32_t dir_cluster, const char* name, FAT32_DirEntry* o
             if (entry.Name[0] == 0x00) return false;
 
             // 삭제된 엔트리(0xE5)는 건너뜀
-            if ((uint8_t)entry.Name[0] == 0xE5) continue;
+            if ((uint8_t)entry.Name[0] == 0xE5) { has_lfn = false; for (int lk = 0; lk < 256; lk++) lfn_buf[lk] = 0; continue; }
 
             // LFN(긴 파일 이름) 및 볼륨 라벨 등은 일단 무시 (필요시 구현)
-            if (entry.Attr == 0x0F) continue;
+            if (entry.Attr == 0x0F) {
+                uint8_t* lraw = (uint8_t*)&entry;
+                uint8_t lseq = lraw[0] & 0x3F;
+                if (lseq >= 1 && lseq <= 20) {
+                    static const int lfn_off[13] = {1,3,5,7,9,14,16,18,20,22,24,28,30};
+                    int lbase = (lseq - 1) * 13;
+                    for (int lj = 0; lj < 13; lj++) {
+                        uint16_t lc = (uint16_t)lraw[lfn_off[lj]] | ((uint16_t)lraw[lfn_off[lj] + 1] << 8);
+                        int lpos = lbase + lj;
+                        if (lpos >= 0 && lpos < 255) {
+                            if (lc == 0 || lc == 0xFFFF) lfn_buf[lpos] = 0;
+                            else lfn_buf[lpos] = (lc < 0x80) ? (char)lc : '?';
+                        }
+                    }
+                    has_lfn = true;
+                }
+                continue;
+            }
 
             // 3. 이름 비교 (8.3 형식 변환 필요하지만 여기선 간단 비교 로직 가정)
             // 실제로는 "TEXT    TXT" 형태를 "text.txt"와 비교하는 함수 필요
-            if (compare_fat_name(entry.Name, name)) {
+            bool lmatch = (has_lfn && strcasecmp(lfn_buf, name) == 0) || compare_fat_name(entry.Name, name);
+            has_lfn = false;
+            for (int lk = 0; lk < 256; lk++) lfn_buf[lk] = 0;
+            if (lmatch) {
                 *out_entry = entry;
                 if (out_offset) {
                     *out_offset = cluster_offset + (i * sizeof(FAT32_DirEntry));
@@ -345,6 +378,253 @@ int FAT32::write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, u
 
     return total_written;
 }
+File* FAT32::create_file(const char* path, uint64_t base_dir_id) {
+    uint32_t cur = (base_dir_id == 0) ? bpb.RootCluster : (uint32_t)base_dir_id;
+    int pi = 0;
+    if (path[pi] == '/') pi++;
+    if (path[pi] == 0) return nullptr;
+    char name[256];
+    while (path[pi] != 0) {
+        int i = 0;
+        while (path[pi] != '/' && path[pi] != 0) name[i++] = path[pi++];
+        name[i] = 0;
+        if (path[pi] == '/') pi++;
+        bool last = (path[pi] == 0);
+        if (!last) { // enter existing subdirectory
+            FAT32_DirEntry e; uint64_t off;
+            if (!find_entry(cur, name, &e, &off)) return nullptr;
+            if (!(e.Attr & 0x10)) return nullptr;
+            cur = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
+            if (cur == 0) cur = bpb.RootCluster;
+            continue;
+        }
+        // last component: open if exists, else create
+        FAT32_DirEntry ex; uint64_t exoff;
+        if (find_entry(cur, name, &ex, &exoff)) {
+            uint32_t fc = ((uint32_t)ex.FstClusHI << 16) | ex.FstClusLO;
+            return new File(this, fc, exoff, ex.FileSize);
+        }
+        // build 8.3 name (uppercase)
+        char n83[11]; for (int k = 0; k < 11; k++) n83[k] = ' ';
+        int di = 0, si = 0;
+        while (name[si] && name[si] != '.' && di < 8) {
+            char c = name[si++]; if (c >= 'a' && c <= 'z') c -= 32; n83[di++] = c;
+        }
+        while (name[si] && name[si] != '.') si++;
+        if (name[si] == '.') { si++; int ei = 0;
+            while (name[si] && ei < 3) { char c = name[si++]; if (c >= 'a' && c <= 'z') c -= 32; n83[8 + ei++] = c; } }
+        // scan directory for a free 32-byte slot
+        int epc = bpb.BytesPerSector * bpb.SectorsPerCluster / 32;
+        uint32_t clus = cur;
+        while (clus < 0x0FFFFFF8) {
+            uint64_t coff = (uint64_t)(bpb.ReservedSectorCount
+                + (uint64_t)bpb.NumFATs * bpb.FATSize32
+                + (uint64_t)(clus - 2) * bpb.SectorsPerCluster) * bpb.BytesPerSector;
+            for (int e = 0; e < epc; e++) {
+                FAT32_DirEntry de;
+                partitioner->read((Partitioner::PartitionInfo&)data, coff + (uint64_t)e * 32, &de, 32);
+                if ((uint8_t)de.Name[0] == 0x00 || (uint8_t)de.Name[0] == 0xE5) {
+                    uint32_t first = alloc_cluster(); // data cluster for the new file
+                    if (!first) return nullptr;
+                    FAT32_DirEntry ne; memset(&ne, 0, sizeof(ne));
+                    memcpy(ne.Name, n83, 8); memcpy(ne.ext, n83 + 8, 3);
+                    ne.Attr = 0x20;
+                    ne.FstClusHI = (uint16_t)(first >> 16);
+                    ne.FstClusLO = (uint16_t)(first & 0xFFFF);
+                    ne.FileSize = 0;
+                    uint64_t eoff = coff + (uint64_t)e * 32;
+                    partitioner->write((Partitioner::PartitionInfo&)data, eoff, &ne, 32);
+                    return new File(this, first, eoff, 0);
+                }
+            }
+            clus = get_next_cluster_from_fat(clus);
+        }
+        return nullptr; // directory full (extension TODO)
+    }
+    return nullptr;
+}
+
+bool FAT32::create_dir(const char* path, uint64_t base_dir_id) {
+    uint32_t cur = (base_dir_id == 0) ? bpb.RootCluster : (uint32_t)base_dir_id;
+    int pi = 0;
+    if (path[pi] == '/') pi++;
+    if (path[pi] == 0) return false;
+    char name[256];
+    while (path[pi] != 0) {
+        int i = 0;
+        while (path[pi] != '/' && path[pi] != 0) name[i++] = path[pi++];
+        name[i] = 0;
+        if (path[pi] == '/') pi++;
+        bool last = (path[pi] == 0);
+        if (!last) { // enter existing subdirectory
+            FAT32_DirEntry e; uint64_t off;
+            if (!find_entry(cur, name, &e, &off)) return false;
+            if (!(e.Attr & 0x10)) return false;
+            cur = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
+            if (cur == 0) cur = bpb.RootCluster;
+            continue;
+        }
+        FAT32_DirEntry ex; uint64_t exoff;
+        if (find_entry(cur, name, &ex, &exoff)) return false; // already exists
+        char n83[11]; for (int k = 0; k < 11; k++) n83[k] = ' ';
+        int di = 0, si = 0;
+        while (name[si] && name[si] != '.' && di < 8) {
+            char c = name[si++]; if (c >= 'a' && c <= 'z') c -= 32; n83[di++] = c;
+        }
+        while (name[si] && name[si] != '.') si++;
+        if (name[si] == '.') { si++; int ei = 0;
+            while (name[si] && ei < 3) { char c = name[si++]; if (c >= 'a' && c <= 'z') c -= 32; n83[8 + ei++] = c; } }
+        int epc = bpb.BytesPerSector * bpb.SectorsPerCluster / 32;
+        uint64_t eoff = ~0ULL;
+        uint32_t clus = cur;
+        while (clus < 0x0FFFFFF8 && eoff == ~0ULL) {
+            uint64_t coff = (uint64_t)(bpb.ReservedSectorCount
+                + (uint64_t)bpb.NumFATs * bpb.FATSize32
+                + (uint64_t)(clus - 2) * bpb.SectorsPerCluster) * bpb.BytesPerSector;
+            for (int e = 0; e < epc; e++) {
+                FAT32_DirEntry de;
+                partitioner->read((Partitioner::PartitionInfo&)data, coff + (uint64_t)e * 32, &de, 32);
+                if ((uint8_t)de.Name[0] == 0x00 || (uint8_t)de.Name[0] == 0xE5) { eoff = coff + (uint64_t)e * 32; break; }
+            }
+            if (eoff == ~0ULL) clus = get_next_cluster_from_fat(clus);
+        }
+        if (eoff == ~0ULL) return false; // parent dir full (extension TODO)
+        uint32_t dclus = alloc_cluster();
+        if (!dclus) return false;
+        uint64_t dcoff = (uint64_t)(bpb.ReservedSectorCount
+            + (uint64_t)bpb.NumFATs * bpb.FATSize32
+            + (uint64_t)(dclus - 2) * bpb.SectorsPerCluster) * bpb.BytesPerSector;
+        uint8_t zero[512]; memset(zero, 0, 512);
+        for (uint32_t s = 0; s < bpb.SectorsPerCluster; s++)
+            partitioner->write((Partitioner::PartitionInfo&)data, dcoff + (uint64_t)s * 512, zero, 512);
+        FAT32_DirEntry dot; memset(&dot, 0, sizeof(dot));
+        for (int k = 0; k < 8; k++) dot.Name[k] = ' ';
+        for (int k = 0; k < 3; k++) dot.ext[k] = ' ';
+        dot.Name[0] = '.'; dot.Attr = 0x10;
+        dot.FstClusHI = (uint16_t)(dclus >> 16); dot.FstClusLO = (uint16_t)(dclus & 0xFFFF);
+        partitioner->write((Partitioner::PartitionInfo&)data, dcoff, &dot, 32);
+        FAT32_DirEntry dd; memset(&dd, 0, sizeof(dd));
+        for (int k = 0; k < 8; k++) dd.Name[k] = ' ';
+        for (int k = 0; k < 3; k++) dd.ext[k] = ' ';
+        dd.Name[0] = '.'; dd.Name[1] = '.'; dd.Attr = 0x10;
+        uint32_t par = (cur == bpb.RootCluster) ? 0 : cur;
+        dd.FstClusHI = (uint16_t)(par >> 16); dd.FstClusLO = (uint16_t)(par & 0xFFFF);
+        partitioner->write((Partitioner::PartitionInfo&)data, dcoff + 32, &dd, 32);
+        FAT32_DirEntry ne; memset(&ne, 0, sizeof(ne));
+        memcpy(ne.Name, n83, 8); memcpy(ne.ext, n83 + 8, 3);
+        ne.Attr = 0x10;
+        ne.FstClusHI = (uint16_t)(dclus >> 16); ne.FstClusLO = (uint16_t)(dclus & 0xFFFF);
+        ne.FileSize = 0;
+        partitioner->write((Partitioner::PartitionInfo&)data, eoff, &ne, 32);
+        return true;
+    }
+    return false;
+}
+
+void FAT32::free_cluster_chain(uint32_t start) {
+    uint32_t c = start;
+    while (c >= 2 && c < 0x0FFFFFF8) {
+        uint32_t next = get_next_cluster_from_fat(c);
+        uint32_t zero = 0;
+        uint64_t fat_off = (uint64_t)bpb.ReservedSectorCount * bpb.BytesPerSector + (uint64_t)c * 4;
+        partitioner->write((Partitioner::PartitionInfo&)data, fat_off, &zero, 4);
+        c = next;
+    }
+}
+bool FAT32::delete_file(const char* path, uint64_t base_dir_id) {
+    uint32_t cur = (base_dir_id == 0) ? bpb.RootCluster : (uint32_t)base_dir_id;
+    int pi = 0;
+    if (path[pi] == '/') pi++;
+    if (path[pi] == 0) return false;
+    char name[256];
+    while (path[pi] != 0) {
+        int i = 0;
+        while (path[pi] != '/' && path[pi] != 0) name[i++] = path[pi++];
+        name[i] = 0;
+        if (path[pi] == '/') pi++;
+        bool last = (path[pi] == 0);
+        FAT32_DirEntry e; uint64_t off;
+        if (!find_entry(cur, name, &e, &off)) return false;
+        if (!last) {
+            if (!(e.Attr & 0x10)) return false;
+            cur = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
+            if (cur == 0) cur = bpb.RootCluster;
+            continue;
+        }
+        if (e.Attr & 0x10) return false; // directory: use rmdir (not here)
+        uint32_t fc = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
+        if (fc >= 2) free_cluster_chain(fc);
+        uint8_t del = 0xE5;
+        partitioner->write((Partitioner::PartitionInfo&)data, off, &del, 1);
+        return true;
+    }
+    return false;
+}
+
+bool FAT32::truncate_file(uint64_t first_cluster, uint64_t meta_id) {
+    uint32_t fc = (uint32_t)first_cluster;
+    if (fc >= 2 && fc < 0x0FFFFFF8) {
+        uint32_t second = get_next_cluster_from_fat(fc);
+        if (second >= 2 && second < 0x0FFFFFF8) free_cluster_chain(second);
+        uint32_t eoc = 0x0FFFFFFF;
+        uint64_t fat_off = (uint64_t)bpb.ReservedSectorCount * bpb.BytesPerSector + (uint64_t)fc * 4;
+        partitioner->write((Partitioner::PartitionInfo&)data, fat_off, &eoc, 4);
+    }
+    uint32_t zero = 0;
+    partitioner->write((Partitioner::PartitionInfo&)data, meta_id + (uint64_t)&((FAT32_DirEntry*)0)->FileSize, &zero, 4);
+    return true;
+}
+
+bool FAT32::remove_dir(const char* path, uint64_t base_dir_id) {
+    uint32_t cur = (base_dir_id == 0) ? bpb.RootCluster : (uint32_t)base_dir_id;
+    int pi = 0;
+    if (path[pi] == '/') pi++;
+    if (path[pi] == 0) return false;
+    char name[256];
+    while (path[pi] != 0) {
+        int i = 0;
+        while (path[pi] != '/' && path[pi] != 0) name[i++] = path[pi++];
+        name[i] = 0;
+        if (path[pi] == '/') pi++;
+        bool last = (path[pi] == 0);
+        FAT32_DirEntry e; uint64_t off;
+        if (!find_entry(cur, name, &e, &off)) return false;
+        if (!last) {
+            if (!(e.Attr & 0x10)) return false;
+            cur = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
+            if (cur == 0) cur = bpb.RootCluster;
+            continue;
+        }
+        if (!(e.Attr & 0x10)) return false; // not a directory
+        uint32_t child = ((uint32_t)e.FstClusHI << 16) | e.FstClusLO;
+        if (child < 2) return false;
+        int epc = bpb.BytesPerSector * bpb.SectorsPerCluster / 32;
+        uint32_t c = child; bool empty = true, done = false;
+        while (c >= 2 && c < 0x0FFFFFF8 && !done) {
+            uint64_t coff = (uint64_t)(bpb.ReservedSectorCount
+                + (uint64_t)bpb.NumFATs * bpb.FATSize32
+                + (uint64_t)(c - 2) * bpb.SectorsPerCluster) * bpb.BytesPerSector;
+            for (int en = 0; en < epc; en++) {
+                FAT32_DirEntry de;
+                partitioner->read((Partitioner::PartitionInfo&)data, coff + (uint64_t)en * 32, &de, 32);
+                uint8_t c0 = (uint8_t)de.Name[0];
+                if (c0 == 0x00) { done = true; break; }
+                if (c0 == 0xE5) continue;
+                if (de.Attr == 0x0F) continue;
+                if (de.Name[0] == '.') continue;
+                empty = false; done = true; break;
+            }
+            if (!done) c = get_next_cluster_from_fat(c);
+        }
+        if (!empty) return false; // not empty
+        free_cluster_chain(child);
+        uint8_t del = 0xE5;
+        partitioner->write((Partitioner::PartitionInfo&)data, off, &del, 1);
+        return true;
+    }
+    return false;
+}
+
 void FAT32::list_directory(const char* path) {
 
 }

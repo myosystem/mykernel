@@ -59,6 +59,11 @@ public:
     ~FAT32();
     void init() override;
     File* open_file(const char* path, uint64_t base_dir_id) override;
+    File* create_file(const char* path, uint64_t base_dir_id) override;
+    bool create_dir(const char* path, uint64_t base_dir_id) override;
+    bool delete_file(const char* path, uint64_t base_dir_id) override;
+    bool truncate_file(uint64_t first_cluster, uint64_t meta_id) override;
+    bool remove_dir(const char* path, uint64_t base_dir_id) override;
     int read_file(uint64_t start_cluster, uint64_t offset, void* buffer, uint32_t size) override;
     int write_file(uint64_t file_id, uint64_t meta_id, uint64_t& file_size, uint64_t offset, const void* buffer, uint32_t size) override;
     void list_directory(const char* path) override;
@@ -66,6 +71,7 @@ public:
     uint64_t get_dir_id(const char* path, uint64_t base_dir_id) override;
     int getdents64(uint64_t dir_id, uint64_t start_idx, void* buf, uint32_t buf_size) override;
     uint32_t alloc_cluster();
+    void free_cluster_chain(uint32_t start);
     bool append_cluster(uint32_t last_cluster, uint32_t new_cluster);
 };
 #endif

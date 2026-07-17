@@ -128,6 +128,46 @@ File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id) {
     return res.target_partition->open_file(res.relative_path, base_id);
 }
 
+File* vfs_create(const char* path, Partition* cwd_part, uint64_t cwd_id) {
+    PathResolveResult res = resolve_path(path, cwd_part);
+    if (res.target_partition == nullptr) return nullptr;
+    uint64_t base_id = 0;
+    bool is_partition_changed = (cwd_part != nullptr) && (res.target_partition != cwd_part);
+    bool is_explicit_root = (res.relative_path != path);
+    if (!is_partition_changed && !is_explicit_root) base_id = cwd_id;
+    return res.target_partition->create_file(res.relative_path, base_id);
+}
+
+int vfs_mkdir(const char* path, Partition* cwd_part, uint64_t cwd_id) {
+    PathResolveResult res = resolve_path(path, cwd_part);
+    if (res.target_partition == nullptr) return -1;
+    uint64_t base_id = 0;
+    bool is_partition_changed = (cwd_part != nullptr) && (res.target_partition != cwd_part);
+    bool is_explicit_root = (res.relative_path != path);
+    if (!is_partition_changed && !is_explicit_root) base_id = cwd_id;
+    return res.target_partition->create_dir(res.relative_path, base_id) ? 0 : -1;
+}
+
+int vfs_unlink(const char* path, Partition* cwd_part, uint64_t cwd_id) {
+    PathResolveResult res = resolve_path(path, cwd_part);
+    if (res.target_partition == nullptr) return -1;
+    uint64_t base_id = 0;
+    bool is_partition_changed = (cwd_part != nullptr) && (res.target_partition != cwd_part);
+    bool is_explicit_root = (res.relative_path != path);
+    if (!is_partition_changed && !is_explicit_root) base_id = cwd_id;
+    return res.target_partition->delete_file(res.relative_path, base_id) ? 0 : -1;
+}
+
+int vfs_rmdir(const char* path, Partition* cwd_part, uint64_t cwd_id) {
+    PathResolveResult res = resolve_path(path, cwd_part);
+    if (res.target_partition == nullptr) return -1;
+    uint64_t base_id = 0;
+    bool is_partition_changed = (cwd_part != nullptr) && (res.target_partition != cwd_part);
+    bool is_explicit_root = (res.relative_path != path);
+    if (!is_partition_changed && !is_explicit_root) base_id = cwd_id;
+    return res.target_partition->remove_dir(res.relative_path, base_id) ? 0 : -1;
+}
+
 File* kernel_open_file(const char* path) {
     return vfs_open(path, nullptr, 0);
 }
@@ -153,6 +193,11 @@ int vfs_chdir(const char* path, Partition* cwd_part, uint64_t cwd_id,
 int STDIn::read(void* buf, uint32_t len) {
     // 아직 구현 안됨 (키보드 버퍼에서 읽어오는 로직 필요)
     return -1;
+}
+void File::truncate() {
+    if (partition) partition->truncate_file(file_id, meta_id);
+    file_size = 0;
+    current_offset = 0;
 }
 int STDOut::write(const void* buf, uint32_t len) {
     const char* cbuf = (const char*)buf;
