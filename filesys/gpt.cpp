@@ -16,22 +16,22 @@ void GPTPartitioner::init(Disk* disk) {
 	uint32_t entries_per_sector = 512 / entry_size;
     for (uint32_t i = 0; i < count; i += entries_per_sector) {
 
-        // ¼½ÅÍ ÇÏ³ª¸¦ ÅëÂ°·Î ÀĞÀ½
+        // ì„¹í„° í•˜ë‚˜ë¥¼ í†µì§¸ë¡œ ì½ìŒ
         uint64_t current_lba = table_lba + (i / entries_per_sector);
         disk->read_bytes(current_lba * SECTOR_SIZE, sector_buffer, 512);
 
-        // ÀĞÀº ¼½ÅÍ ¾È¿¡¼­ ¿£Æ®¸®µéÀ» ÆÄ½Ì
+        // ì½ì€ ì„¹í„° ì•ˆì—ì„œ ì—”íŠ¸ë¦¬ë“¤ì„ íŒŒì‹±
         for (uint32_t j = 0; j < entries_per_sector; j++) {
             uint32_t entry_idx = i + j;
             if (entry_idx >= count) break;
 
-            // ¹öÆÛ ³» ¿ÀÇÁ¼Â °è»ê
+            // ë²„í¼ ë‚´ ì˜¤í”„ì…‹ ê³„ì‚°
             Gpt_entry* entry = (Gpt_entry*)(sector_buffer + (j * entry_size));
 
-            // ºñ¾îÀÖ´ÂÁö È®ÀÎ (Type GUID°¡ 0ÀÎÁö)
+            // ë¹„ì–´ìˆëŠ”ì§€ í™•ì¸ (Type GUIDê°€ 0ì¸ì§€)
             if (is_all_zero(entry->type_guid, 16)) continue;
 
-            // PartitionInfo »ı¼º
+            // PartitionInfo ìƒì„±
             Partition::PartitionInfo pinfo;
             pinfo.attrs = entry->attrs;
             pinfo.first_lba = entry->first_lba;
@@ -39,9 +39,9 @@ void GPTPartitioner::init(Disk* disk) {
             memcpy(pinfo.name, entry->name, sizeof(pinfo.name));
             memcpy(pinfo.type_guid, entry->type_guid, sizeof(pinfo.type_guid));
 
-            // [Áß¿ä] ¿©±â¼­ this¸¦ ³Ñ°ÜÁÜ (Partitioner À§ÀÓ ±¸Á¶ÀÏ °æ¿ì)
+            // [ì¤‘ìš”] ì—¬ê¸°ì„œ thisë¥¼ ë„˜ê²¨ì¤Œ (Partitioner ìœ„ì„ êµ¬ì¡°ì¼ ê²½ìš°)
             (new Partition(pinfo, this))->init();
-            // ÀÌ¸§ Ãâ·Â ·ÎÁ÷ µî...
+            // ì´ë¦„ ì¶œë ¥ ë¡œì§ ë“±...
         }
     }
 }

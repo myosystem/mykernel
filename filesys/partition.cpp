@@ -21,7 +21,7 @@ void Partition::operator delete(void* ptr) {
 	p->flags &= ~0x1;
 	uint64_t index = ((uint64_t)p - PARTITION_QUEUE_BASE) / PARTITIONSTRUCT_SIZE;
 	if (index == max_partition_index) {
-		// ÃÖ´ñ°ª °»½Å
+		// ìµœëŒ“ê°’ ê°±ì‹ 
 		while (max_partition_index > 0) {
 			Partition* check_part = (Partition*)(PARTITION_QUEUE_BASE + PARTITIONSTRUCT_SIZE * (max_partition_index - 1));
 			max_partition_index--;
@@ -37,7 +37,7 @@ void Partition::init() {
 	this->partitioner->read((Partitioner::PartitionInfo&)this->data, 0, boot_sector, 512);
 	bool is_fat32 = (strncmp((char*)&boot_sector[0x52], "FAT32   ", 8) == 0);
 	if(is_fat32) {
-		// FAT32 ÆÄÆ¼¼Ç ÃÊ±âÈ­
+		// FAT32 íŒŒí‹°ì…˜ ì´ˆê¸°í™”
 		PartitionInfo saved_info = this->data;
 		this->~Partition();
 		::new (this) FAT32(saved_info, partitioner);

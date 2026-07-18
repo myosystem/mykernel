@@ -25,7 +25,7 @@ void ioapic_set_redirection(uint8_t irq, uint8_t vector, uint8_t apic_id) {
     // HIGH: destination APIC ID (target CPU)
     uint32_t high = ((uint32_t)apic_id) << 24;
 
-    // LOW ¼³Á¤
+    // LOW ì„¤ì •
     uint32_t low = 0;
     low |= vector;           // Vector (IDT entry number)
     low |= (0 << 8);         // Delivery Mode = Fixed
@@ -34,7 +34,7 @@ void ioapic_set_redirection(uint8_t irq, uint8_t vector, uint8_t apic_id) {
     low |= (0 << 15);        // Trigger Mode = Edge
     low |= (0 << 16);        // Mask = 0 (enable)
 
-    // IOAPIC¿¡ ¾²±â
+    // IOAPICì— ì“°ê¸°
     ioapic_write(reg_high, high);  // Destination CPU
     ioapic_write(reg, low);        // Redirection Entry Low
 }

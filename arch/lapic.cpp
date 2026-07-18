@@ -7,34 +7,34 @@
 volatile uint64_t lapic_base;
 
 void init_lapic_base() {
-    lapic_base = rdmsr(0x1B) & 0xFFFFF000;  // ÇÏÀ§ 12ºñÆ®´Â ¹«½Ã
-	lapic_base += MMIO_BASE; // MMIO ¿ÀÇÁ¼Â ´õÇÏ±â
+    lapic_base = rdmsr(0x1B) & 0xFFFFF000;  // í•˜ìœ„ 12ë¹„íŠ¸ëŠ” ë¬´ì‹œ
+	lapic_base += MMIO_BASE; // MMIO ì˜¤í”„ì…‹ ë”í•˜ê¸°
     virt_page_allocator->alloc_virt_page(lapic_base, lapic_base - MMIO_BASE, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
 }
 
-// PIC ºñÈ°¼ºÈ­
+// PIC ë¹„í™œì„±í™”
 void disable_pic() {
-    outb(0xA1, 0xFF); // ½½·¹ÀÌºê PIC ¸¶½ºÅ©
-    outb(0x21, 0xFF); // ¸¶½ºÅÍ PIC ¸¶½ºÅ©
+    outb(0xA1, 0xFF); // ìŠ¬ë ˆì´ë¸Œ PIC ë§ˆìŠ¤í¬
+    outb(0x21, 0xFF); // ë§ˆìŠ¤í„° PIC ë§ˆìŠ¤í¬
 }
-// PS/2 ÄÁÆ®·Ñ·¯¿¡¼­ ¸¶¿ì½º È°¼ºÈ­ ¹× ÀÎÅÍ·´Æ® ¼³Á¤
+// PS/2 ì»¨íŠ¸ë¡¤ëŸ¬ì—ì„œ ë§ˆìš°ìŠ¤ í™œì„±í™” ë° ì¸í„°ëŸ½íŠ¸ ì„¤ì •
 void enable_cursor() {
-    // 1. ¹öÆÛ ºñ¿ì±â
+    // 1. ë²„í¼ ë¹„ìš°ê¸°
     while (inb(0x64) & 0x01) inb(0x60);
 
-    // 2. ¸¶¿ì½º Æ÷Æ® È°¼ºÈ­
+    // 2. ë§ˆìš°ìŠ¤ í¬íŠ¸ í™œì„±í™”
     outb(0x64, 0xA8);
 
-    // 3. CCB ÀĞ¾î¼­ ¼öÁ¤
+    // 3. CCB ì½ì–´ì„œ ìˆ˜ì •
     outb(0x64, 0x20);
     while (!(inb(0x64) & 0x01));
     uint8_t ccb = inb(0x60);
-    ccb |= 0x02;   // ¸¶¿ì½º IRQ12 È°¼ºÈ­
-    ccb &= ~0x20;  // ¸¶¿ì½º Å¬·° È°¼ºÈ­
+    ccb |= 0x02;   // ë§ˆìš°ìŠ¤ IRQ12 í™œì„±í™”
+    ccb &= ~0x20;  // ë§ˆìš°ìŠ¤ í´ëŸ­ í™œì„±í™”
     outb(0x64, 0x60);
     outb(0x60, ccb);
 
-    // 4. ¸¶¿ì½º ¸®¼Â
+    // 4. ë§ˆìš°ìŠ¤ ë¦¬ì…‹
     outb(0x64, 0xD4);
     outb(0x60, 0xFF);
     while (!(inb(0x64) & 0x01));
@@ -44,22 +44,22 @@ void enable_cursor() {
     while (!(inb(0x64) & 0x01));
     inb(0x60); // 0x00 (mouse ID)
 
-    // 5. »ùÇÃ·¹ÀÌÆ® ¼³Á¤ (³Ê¹« ³ôÀ¸¸é VMware¿¡¼­ ¹öÆÛ °úºÎÇÏ)
+    // 5. ìƒ˜í”Œë ˆì´íŠ¸ ì„¤ì • (ë„ˆë¬´ ë†’ìœ¼ë©´ VMwareì—ì„œ ë²„í¼ ê³¼ë¶€í•˜)
     outb(0x64, 0xD4); outb(0x60, 0xF3); // Set Sample Rate
     while (!(inb(0x64) & 0x01)); inb(0x60); // ACK
     outb(0x64, 0xD4); outb(0x60, 100);
     while (!(inb(0x64) & 0x01)); inb(0x60); // ACK
 
-    // 6. ¸¶¿ì½º È°¼ºÈ­
+    // 6. ë§ˆìš°ìŠ¤ í™œì„±í™”
     outb(0x64, 0xD4);
     outb(0x60, 0xF4);
     while (!(inb(0x64) & 0x01));
     inb(0x60); // ACK
 
-    // 7. ³²Àº ¹öÆÛ ¿ÏÀüÈ÷ ºñ¿ì±â
+    // 7. ë‚¨ì€ ë²„í¼ ì™„ì „íˆ ë¹„ìš°ê¸°
     while (inb(0x64) & 0x01) inb(0x60);
 }
-// PS/2 ÄÁÆ®·Ñ·¯¿¡¼­ Å°º¸µå È°¼ºÈ­
+// PS/2 ì»¨íŠ¸ë¡¤ëŸ¬ì—ì„œ í‚¤ë³´ë“œ í™œì„±í™”
 void enable_keyboard() {
     outb(0x64, 0xAE);              // enable keyboard port
     outb(0x64, 0x20);              // request controller config byte
@@ -71,9 +71,9 @@ void enable_keyboard() {
     outb(0x60, ccb);
     while (inb(0x64) & 0x01) inb(0x60); // flush
 }
-// Local APIC È°¼ºÈ­
+// Local APIC í™œì„±í™”
 void enable_apic() {
-    // Àü¿ª lapic_base »ç¿ë
+    // ì „ì—­ lapic_base ì‚¬ìš©
     uint64_t val = rdmsr(0x1B);
     val |= (1 << 11);  // APIC Global Enable
     wrmsr(0x1B, val);
@@ -81,7 +81,7 @@ void enable_apic() {
     volatile uint32_t* lapic = (volatile uint32_t*)lapic_base;
     lapic[0xF0 / 4] = (lapic[0xF0 / 4] & 0xFFFFFDFF) | 0x100;
 }
-// IOAPIC ·¹Áö½ºÅÍ Á¢±Ù
+// IOAPIC ë ˆì§€ìŠ¤í„° ì ‘ê·¼
 
 static inline int tsc_deadline_supported(void) {
     uint32_t ecx;
@@ -91,17 +91,17 @@ static inline int tsc_deadline_supported(void) {
         : "a"(1)
         : "ebx", "edx"
         );
-    // CPUID.01H:ECX[24] = TSC-Deadline Áö¿ø ºñÆ®
+    // CPUID.01H:ECX[24] = TSC-Deadline ì§€ì› ë¹„íŠ¸
     return (ecx >> 24) & 1;
 }
-// ±âÁ¸ Á¤ÀÇ Àç»ç¿ë
+// ê¸°ì¡´ ì •ì˜ ì¬ì‚¬ìš©
 #define LAPIC_REG_TIMER         0x320
 #define LAPIC_REG_TIMER_DIVIDE  0x3E0
 #define LAPIC_REG_TIMER_INIT    0x380
 #define LAPIC_REG_EOI           0xB0
 
-// Ãß°¡ Á¤ÀÇ
-#define LAPIC_TIMER_MODE_TSC_DEADLINE (2 << 17)  // ±âÁ¸ PERIODIC (1<<17)°ú µ¿ÀÏ ÆĞÅÏ
+// ì¶”ê°€ ì •ì˜
+#define LAPIC_TIMER_MODE_TSC_DEADLINE (2 << 17)  // ê¸°ì¡´ PERIODIC (1<<17)ê³¼ ë™ì¼ íŒ¨í„´
 #define LAPIC_TIMER_MODE_ONESHOT  (0 << 17)
 #define MSR_IA32_TSC_DEADLINE         0x6E0
 #define PIT_HZ          1193182ULL
@@ -116,17 +116,17 @@ uint64_t fake_deadline = 0;
 uint64_t calibrate_with_pit(void) {
     uint16_t pit_ticks = (uint16_t)(PIT_HZ / 100); // 10ms
 
-    // PIT ¼³Á¤
+    // PIT ì„¤ì •
     outb(PIT_CMD, 0b10110010);
     outb(PIT_CH2, (uint8_t)(pit_ticks & 0xFF));
     outb(PIT_CH2, (uint8_t)(pit_ticks >> 8));
 
-    // GATE ½ÃÀÛ
+    // GATE ì‹œì‘
     uint8_t gate = inb(PIT_GATE);
     outb(PIT_GATE, (gate & ~1) | 1);
 
     if (tsc_available) {
-        // TSC Hz ÃøÁ¤
+        // TSC Hz ì¸¡ì •
         uint64_t start = rdtsc_get();
         while (!(inb(PIT_GATE) & 0x20));
         return (rdtsc_get() - start) * 100;
@@ -136,14 +136,14 @@ uint64_t calibrate_with_pit(void) {
         lapic_write(LAPIC_REG_TIMER_DIVIDE, 0b0011);
         lapic_write(LAPIC_REG_TIMER_INIT, 0xFFFFFFFF);
 
-        uint64_t tsc_start = rdtsc_get();  // TSCµµ °°ÀÌ ÃøÁ¤ ½ÃÀÛ
+        uint64_t tsc_start = rdtsc_get();  // TSCë„ ê°™ì´ ì¸¡ì • ì‹œì‘
         while (!(inb(PIT_GATE) & 0x20));
         uint64_t tsc_elapsed = rdtsc_get() - tsc_start;
 
         uint32_t lapic_current = *(volatile uint32_t*)(lapic_base + 0x390);
         uint32_t lapic_elapsed = 0xFFFFFFFF - lapic_current;
 
-		g_tsc_hz = (tsc_elapsed * 100) / lapic_elapsed; // TSC Hz °è»ê
+		g_tsc_hz = (tsc_elapsed * 100) / lapic_elapsed; // TSC Hz ê³„ì‚°
 
         return (uint64_t)lapic_elapsed * 100;
     }
@@ -155,15 +155,15 @@ uint64_t tsc_get_freq_cpuid(void) {
         : "a"(0x15)
         : "edx");
 
-    // eax = TSC/crystal ºĞ¸ğ, ebx = ºĞÀÚ, ecx = crystal Hz
+    // eax = TSC/crystal ë¶„ëª¨, ebx = ë¶„ì, ecx = crystal Hz
     if (eax == 0 || ebx == 0 || ecx == 0)
-        return 0; // Áö¿ø ¾È ÇÔ ¡æ ¹æ¹ı 2·Î fallback
+        return 0; // ì§€ì› ì•ˆ í•¨ â†’ ë°©ë²• 2ë¡œ fallback
 
     return (uint64_t)ecx * ebx / eax;
 }
-// TSC-Deadline ÃÊ±âÈ­ (±âÁ¸ setup_lapic_timer¿Í µ¿ÀÏÇÑ ½Ã±×´ÏÃ³)
+// TSC-Deadline ì´ˆê¸°í™” (ê¸°ì¡´ setup_lapic_timerì™€ ë™ì¼í•œ ì‹œê·¸ë‹ˆì²˜)
 void setup_lapic_timer_tsc_deadline(uint8_t vector) {
-    // Divide, Init Count´Â TSC-Deadline ¸ğµå¿¡¼­ ¹«½ÃµÊ ¡æ ¼³Á¤ ºÒÇÊ¿ä
+    // Divide, Init CountëŠ” TSC-Deadline ëª¨ë“œì—ì„œ ë¬´ì‹œë¨ â†’ ì„¤ì • ë¶ˆí•„ìš”
     if(tsc_available)
         lapic_write(LAPIC_REG_TIMER, LAPIC_TIMER_MODE_TSC_DEADLINE | vector);
     else {
@@ -173,7 +173,7 @@ void setup_lapic_timer_tsc_deadline(uint8_t vector) {
 }
 void tsc_init(void) {
     if (!tsc_deadline_supported()) {
-        g_lapic_hz = calibrate_with_pit();// lapic_ticks_per_tsc_tick ±¸ÇÏ±â
+        g_lapic_hz = calibrate_with_pit();// lapic_ticks_per_tsc_tick êµ¬í•˜ê¸°
         return;
     }
 	tsc_available = true;
@@ -182,7 +182,7 @@ void tsc_init(void) {
         g_tsc_hz = calibrate_with_pit(); // fallback
 }
 
-// Ãë¼Ò
+// ì·¨ì†Œ
 void lapic_tsc_deadline_cancel(void) {
     if (tsc_available) {
         //__asm__ volatile ("mfence" ::: "memory");

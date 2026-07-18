@@ -5,7 +5,7 @@
 #include "mm/allocator"
 #include "util/util.h"
 
-// todo - MBRºÐ¼® ÄÚµå ³Ö¾î¾ßÇÔ
+// todo - MBRë¶„ì„ ì½”ë“œ ë„£ì–´ì•¼í•¨
 void MBRPartitioner::init(Disk* disk) {
 	disk->read_bytes(0, &mbr, sizeof(MBR));
 	if (mbr.partitions[0].type == 0xEE) {

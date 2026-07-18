@@ -3,6 +3,6 @@
 #include "util/size.h"
 
 Partitioner* Partitioner::create_default() {
-	// ±âº» ÆÄÆ¼¼Å³Ê´Â MBR ÆÄÆ¼¼Å³Ê
+	// ê¸°ë³¸ íŒŒí‹°ì…”ë„ˆëŠ” MBR íŒŒí‹°ì…”ë„ˆ
 	return new MBRPartitioner();
 }

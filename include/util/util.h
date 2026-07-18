@@ -12,9 +12,9 @@ static const char hex_digits[] = "0123456789ABCDEF";
 static inline void bytes_to_hex_string(const char* src, int len, char* dst) {
     for (int i = 0; i < len; i++) {
         unsigned char byte = (unsigned char)src[i];
-        dst[i * 3 + 0] = hex_digits[(byte >> 4) & 0xF]; // »óÀ§ 4ºñÆ®
-        dst[i * 3 + 1] = hex_digits[byte & 0xF];        // ÇÏÀ§ 4ºñÆ®
-        dst[i * 3 + 2] = ' ';                           // °£°İ¿ë
+        dst[i * 3 + 0] = hex_digits[(byte >> 4) & 0xF]; // ìƒìœ„ 4ë¹„íŠ¸
+        dst[i * 3 + 1] = hex_digits[byte & 0xF];        // í•˜ìœ„ 4ë¹„íŠ¸
+        dst[i * 3 + 2] = ' ';                           // ê°„ê²©ìš©
     }
     dst[len * 3] = '\0';  // null-terminate
 }

@@ -16,41 +16,36 @@ extern uint64_t cowlog[16];
 extern bool booting;
 __attribute__((interrupt))
 void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
-    uint64_t rsp;
-    __asm__ __volatile__("mov %0, rsp" : "=r"(rsp));
-    if (rsp <= 0xffffff0000000068) {
-        uart_print("tf");
-    }
     uint64_t cr2;
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
     if (!(error_code & (1ull << 2ull))) {
         uint64_t pml4_entry = (cr2 >> 39) & 0x1FF;
         if (256 <= pml4_entry && pml4_entry <= 270) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
-            memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);      // Todo : »õ·Î¿î new¹æ½Ä Æ¯¼º»ó ÀÌ°Å ÇÊ¿ä¾ø´Ù ½Ï´Ù ±³Ã¼ÇÏ°í ¹Ù²ã¾ßµÉµí
+            memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);      // Todo : ìƒˆë¡œìš´ newë°©ì‹ íŠ¹ì„±ìƒ ì´ê±° í•„ìš”ì—†ë‹¤ ì‹¹ë‹¤ êµì²´í•˜ê³  ë°”ê¿”ì•¼ë ë“¯
             return;
         }
     }
     if (now_process) {
-        if (error_code & 1) { // PresentÀÎµ¥ PF = ±ÇÇÑ À§¹Ý
+        if (error_code & 1) { // Presentì¸ë° PF = ê¶Œí•œ ìœ„ë°˜
             uint64_t pte = virt_page_allocator->get_pte(cr2 & ~0xFFFULL);
             if (pte != ~0ULL && (pte & VirtPageAllocator::PTE_COW)) {
 #ifdef TEST_MODE
                 uint64_t __c0 = rdtsc_get();
                 uint64_t __copied = 0;
 #endif
-                // CoW Ã³¸®
+                // CoW ì²˜ë¦¬
                 uint64_t pa = pte & PTE_ADDR_MASK;
                 uint64_t saved_flags = (pte >> 60) & 0x7;
                 uint64_t new_flags = VirtPageAllocator::P | VirtPageAllocator::US;
                 if (saved_flags & 0x2) new_flags |= VirtPageAllocator::RW;
                 if (saved_flags & 0x4) new_flags |= VirtPageAllocator::NX;
                 if (phy_page_allocator->get_refcount(pa) == 1) {
-                    // ³ª¸¸ ¾²´Â ÆäÀÌÁö, ±×³É ±ÇÇÑ º¹±¸
+                    // ë‚˜ë§Œ ì“°ëŠ” íŽ˜ì´ì§€, ê·¸ëƒ¥ ê¶Œí•œ ë³µêµ¬
                     virt_page_allocator->change_flags(cr2 & ~0xFFFULL, new_flags);
                 }
                 else {
-                    // º¹»ç
+                    // ë³µì‚¬
                     uint64_t new_pa = phy_page_allocator->alloc_phy_page();
 #ifdef TEST_MODE
                     __copied = 1;

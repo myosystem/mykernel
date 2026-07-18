@@ -17,7 +17,7 @@ public:
 		uint64_t first_lba;
 		uint64_t last_lba;
 		uint64_t attrs;
-		uint16_t name[36]; // UTF-16LE ÀÌ¸§
+		uint16_t name[36]; // UTF-16LE ì´ë¦„
 	} __attribute__((packed));
 	Partitioner() {}
 	virtual void init(Disk* disk) = 0;
@@ -28,7 +28,7 @@ public:
 	static void* operator new(size_t size) noexcept {
 		if (size > PARTITIONER_SLOT_SIZE) return nullptr;
 		uint64_t addr = PARTITIONER_QUEUE_BASE;
-		addr += PARTITIONER_SLOT_SIZE; //0¹ø ÆÄÆ¼¼ÇÀº ºÎÆ®
+		addr += PARTITIONER_SLOT_SIZE; //0ë²ˆ íŒŒí‹°ì…˜ì€ ë¶€íŠ¸
 		while ((((Partitioner*)addr)->flags & 0x1) != 0) {
 			addr += PARTITIONER_SLOT_SIZE;
 		}
@@ -38,7 +38,7 @@ public:
 
 	static void operator delete(void* ptr) {
 		if (ptr) ((Partitioner*)ptr)->flags &= ~0x1;
-		// ÆäÀÌÁö ÇØÁ¦ÇÏÁö ¾ÊÀ½ (±ê¹ß¸¸ ³»¸²)
+		// íŽ˜ì´ì§€ í•´ì œí•˜ì§€ ì•ŠìŒ (ê¹ƒë°œë§Œ ë‚´ë¦¼)
 	}
 };
 #endif

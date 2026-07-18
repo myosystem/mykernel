@@ -16,7 +16,7 @@ public:
         uint64_t first_lba;
         uint64_t last_lba;
         uint64_t attrs;
-        uint16_t name[36]; // UTF-16LE ¿Ã∏ß
+        uint16_t name[36]; // UTF-16LE Ïù¥Î¶Ñ
     } __attribute__((packed));
     char alias[12];
 	Partition(PartitionInfo pinfo, Partitioner* partitioner) : data(pinfo), partitioner(partitioner) {

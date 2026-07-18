@@ -4,24 +4,24 @@
 #include "filesys/file.h"
 #include "filesys/partition.h"
 struct FAT32_BPB {
-    uint8_t  jmpBoot[3];        // Á¡ÇÁ ÄÚµå
-    char     OEMName[8];        // OEM ÀÌ¸§
-    uint16_t BytesPerSector;    // ¼½ÅÍ Å©±â
-    uint8_t  SectorsPerCluster; // Å¬·¯½ºÅÍ´ç ¼½ÅÍ ¼ö
-    uint16_t ReservedSectorCount; // ¿¹¾à ¼½ÅÍ ¼ö (FAT ½ÃÀÛ±âÁØ)
-    uint8_t  NumFATs;           // FAT Å×ÀÌºí ¼ö
-    uint16_t RootEntryCount;    // FAT12/16¿ë, FAT32´Â 0
-    uint16_t TotalSectors16;    // 16ºñÆ® ÀüÃ¼ ¼½ÅÍ ¼ö, FAT32´Â 0
-    uint8_t  Media;             // ¹Ìµğ¾î Å¸ÀÔ
-    uint16_t FATSize16;         // FAT12/16¿ë, FAT32´Â 0
+    uint8_t  jmpBoot[3];        // ì í”„ ì½”ë“œ
+    char     OEMName[8];        // OEM ì´ë¦„
+    uint16_t BytesPerSector;    // ì„¹í„° í¬ê¸°
+    uint8_t  SectorsPerCluster; // í´ëŸ¬ìŠ¤í„°ë‹¹ ì„¹í„° ìˆ˜
+    uint16_t ReservedSectorCount; // ì˜ˆì•½ ì„¹í„° ìˆ˜ (FAT ì‹œì‘ê¸°ì¤€)
+    uint8_t  NumFATs;           // FAT í…Œì´ë¸” ìˆ˜
+    uint16_t RootEntryCount;    // FAT12/16ìš©, FAT32ëŠ” 0
+    uint16_t TotalSectors16;    // 16ë¹„íŠ¸ ì „ì²´ ì„¹í„° ìˆ˜, FAT32ëŠ” 0
+    uint8_t  Media;             // ë¯¸ë””ì–´ íƒ€ì…
+    uint16_t FATSize16;         // FAT12/16ìš©, FAT32ëŠ” 0
     uint16_t SectorsPerTrack;
     uint16_t NumberOfHeads;
-    uint32_t HiddenSectors;     // ÆÄÆ¼¼Ç ½ÃÀÛ LBA
-    uint32_t TotalSectors32;    // FAT32 ÀüÃ¼ ¼½ÅÍ ¼ö
-    uint32_t FATSize32;         // FAT32 FAT Å×ÀÌºí Å©±â(¼½ÅÍ ´ÜÀ§)
+    uint32_t HiddenSectors;     // íŒŒí‹°ì…˜ ì‹œì‘ LBA
+    uint32_t TotalSectors32;    // FAT32 ì „ì²´ ì„¹í„° ìˆ˜
+    uint32_t FATSize32;         // FAT32 FAT í…Œì´ë¸” í¬ê¸°(ì„¹í„° ë‹¨ìœ„)
     uint16_t ExtFlags;
     uint16_t FSVersion;
-    uint32_t RootCluster;       // ·çÆ® µğ·ºÅä¸® ½ÃÀÛ Å¬·¯½ºÅÍ
+    uint32_t RootCluster;       // ë£¨íŠ¸ ë””ë ‰í† ë¦¬ ì‹œì‘ í´ëŸ¬ìŠ¤í„°
     uint16_t FSInfo;
     uint16_t BackupBootSector;
     uint8_t  Reserved[12];
@@ -34,9 +34,9 @@ struct FAT32_BPB {
 } __attribute__ ((packed));
 
 struct FAT32_DirEntry {
-    char     Name[8];       // 8ÀÚ ÆÄÀÏ¸í
-	char     ext[3];        // È®ÀåÀÚ
-    uint8_t  Attr;           // ¼Ó¼º (0x10=µğ·ºÅä¸®, 0x20=ÆÄÀÏ)
+    char     Name[8];       // 8ì íŒŒì¼ëª…
+	char     ext[3];        // í™•ì¥ì
+    uint8_t  Attr;           // ì†ì„± (0x10=ë””ë ‰í† ë¦¬, 0x20=íŒŒì¼)
     uint8_t  NTRes;
     uint8_t  CrtTimeTenth;
     uint16_t CrtTime;

@@ -42,7 +42,7 @@ void VirtPageAllocator::init(PhysPageAllocator* phy_allocator, uint64_t pml4) {
 }
 uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t flags) {
     if ((va & 0xFFF) || (pa & 0xFFF)) 
-        return ~0ULL; // Á¤·Ä ºÒ·®
+        return ~0ULL; // ì •ë ¬ ë¶ˆëŸ‰
     //uart_print("va\n0x");
     //uart_print_hex(va);
     //uart_print("\n0x");
@@ -61,14 +61,14 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
             _unlockv(); return ~0ULL; 
         }
         memset((void*)(HHDM_BASE + new_pdpt_pa), 0, 4096);
-        *pml4e = (new_pdpt_pa & ~0xFFFULL) | RW | P | us; // User=0(Ä¿³Î)
+        *pml4e = (new_pdpt_pa & ~0xFFFULL) | RW | P | us; // User=0(ì»¤ë„)
     }
 
     // PDPTE
     uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
     if (*pdpte & PS) { 
         _unlockv(); return ~0ULL; 
-    } // 1GiB ÆäÀÌÁö Ãæµ¹
+    } // 1GiB í˜ì´ì§€ ì¶©ëŒ
     if (!(*pdpte & P)) {
         uint64_t new_pd_pa = phy_allocator->alloc_phy_page();
         if (!new_pd_pa) { 
@@ -82,7 +82,7 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
     uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
     if (*pde & PS) { 
         _unlockv(); return ~0ULL; 
-    } // 2MiB ÆäÀÌÁö Ãæµ¹
+    } // 2MiB í˜ì´ì§€ ì¶©ëŒ
     if (!(*pde & P)) {
         uint64_t new_pt_pa = phy_allocator->alloc_phy_page();
         if (!new_pt_pa) { 
@@ -96,17 +96,17 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
     if (*pte & P) { 
         _unlockv(); return ~0ULL; 
-    } // ÀÌ¹Ì ¸ÅÇÎµÊ (±¸ºĞÇÏ·Á¸é º°µµ ÄÚµå »ç¿ë)
+    } // ì´ë¯¸ ë§¤í•‘ë¨ (êµ¬ë¶„í•˜ë ¤ë©´ ë³„ë„ ì½”ë“œ ì‚¬ìš©)
 
     *pte = (pa & ~0xFFFULL) | flags | us;
 
-    invlpg((void*)va); // TLB flush (ÇØ´ç VA¸¸)
+    invlpg((void*)va); // TLB flush (í•´ë‹¹ VAë§Œ)
 
     _unlockv();
     return va;
 }
 uint64_t VirtPageAllocator::alloc_virt_pages(uint64_t va, uint64_t size, uint64_t flags) {
-    if ((va & 0xFFF) || (size & 0xFFF)) return ~0ULL; // Á¤·Ä ºÒ·®
+    if ((va & 0xFFF) || (size & 0xFFF)) return ~0ULL; // ì •ë ¬ ë¶ˆëŸ‰
     uint64_t pages = (size + 4095) / 4096;
     uart_print("size:");
     uart_print(size);
@@ -116,7 +116,7 @@ uint64_t VirtPageAllocator::alloc_virt_pages(uint64_t va, uint64_t size, uint64_
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t pa = phy_allocator->alloc_phy_page();
         if (alloc_virt_page(va + i * 4096, pa, flags) == ~0ULL) {
-            // ½ÇÆĞ ½Ã Áö±İ±îÁö ÇÒ´çµÈ ÆäÀÌÁö ÇØÁ¦
+            // ì‹¤íŒ¨ ì‹œ ì§€ê¸ˆê¹Œì§€ í• ë‹¹ëœ í˜ì´ì§€ í•´ì œ
             phy_allocator->put_page(pa);
             uart_print("error!!\n");
             free_virt_pages(va, i * 4096);
@@ -126,7 +126,7 @@ uint64_t VirtPageAllocator::alloc_virt_pages(uint64_t va, uint64_t size, uint64_
     return va;
 }
 uint64_t VirtPageAllocator::alloc_virt_pages_range(uint64_t va, uint64_t pa, uint64_t size, uint64_t flags) {
-    if ((va & 0xFFF) || (pa & 0xFFF) || (size & 0xFFF)) return ~0ULL; // Á¤·Ä ºÒ·®
+    if ((va & 0xFFF) || (pa & 0xFFF) || (size & 0xFFF)) return ~0ULL; // ì •ë ¬ ë¶ˆëŸ‰
     uint64_t pages = (size + 4095) / 4096;
     uart_print("size:");
     uart_print(size);
@@ -135,7 +135,7 @@ uint64_t VirtPageAllocator::alloc_virt_pages_range(uint64_t va, uint64_t pa, uin
     uart_print("\n");
     for (uint64_t i = 0; i < pages; i++) {
         if (alloc_virt_page(va + i * 4096, pa + i * 4096, flags) == ~0ULL) {
-            // ½ÇÆĞ ½Ã Áö±İ±îÁö ÇÒ´çµÈ ÆäÀÌÁö ÇØÁ¦
+            // ì‹¤íŒ¨ ì‹œ ì§€ê¸ˆê¹Œì§€ í• ë‹¹ëœ í˜ì´ì§€ í•´ì œ
             uart_print("error!!\n");
             free_virt_pages(va, i * 4096);
             return ~0ULL;
@@ -144,44 +144,44 @@ uint64_t VirtPageAllocator::alloc_virt_pages_range(uint64_t va, uint64_t pa, uin
     return va;
 }
 uint64_t VirtPageAllocator::free_virt_page(uint64_t va) {
-    if (va & 0xFFF) return ~0ULL; // Á¤·Ä ºÒ·®
+    if (va & 0xFFF) return ~0ULL; // ì •ë ¬ ë¶ˆëŸ‰
     _lockv();
     // PML4E
     uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
-    if (!(*pml4e & P)) { _unlockv(); return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pml4e & P)) { _unlockv(); return ~0ULL; } // ë¯¸í• ë‹¹
     // PDPTE
     uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
-    if (!(*pdpte & P)) { _unlockv(); return ~0ULL; } // ¹ÌÇÒ´ç
-    if (*pdpte & PS) { _unlockv(); return ~0ULL; } // 1GiB ÆäÀÌÁö Ãæµ¹
+    if (!(*pdpte & P)) { _unlockv(); return ~0ULL; } // ë¯¸í• ë‹¹
+    if (*pdpte & PS) { _unlockv(); return ~0ULL; } // 1GiB í˜ì´ì§€ ì¶©ëŒ
     // PDE
     uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
-    if (!(*pde & P)) { _unlockv(); return ~0ULL; } // ¹ÌÇÒ´ç
-    if (*pde & PS) { _unlockv(); return ~0ULL; } // 2MiB ÆäÀÌÁö Ãæµ¹
+    if (!(*pde & P)) { _unlockv(); return ~0ULL; } // ë¯¸í• ë‹¹
+    if (*pde & PS) { _unlockv(); return ~0ULL; } // 2MiB í˜ì´ì§€ ì¶©ëŒ
     // PTE
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
-    if (!(*pte & P)) { _unlockv(); return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pte & P)) { _unlockv(); return ~0ULL; } // ë¯¸í• ë‹¹
     uint64_t result = *pte & PTE_ADDR_MASK;
-    *pte = 0; // ÇØÁ¦
-    invlpg((void*)va); // TLB flush (ÇØ´ç VA¸¸)
+    *pte = 0; // í•´ì œ
+    invlpg((void*)va); // TLB flush (í•´ë‹¹ VAë§Œ)
     _unlockv();
     return result;
 }
 bool VirtPageAllocator::change_flags(uint64_t va, uint64_t flags) {
-    if (va & 0xFFF) return false; // Á¤·Ä ºÒ·®
+    if (va & 0xFFF) return false; // ì •ë ¬ ë¶ˆëŸ‰
     // PML4E
     uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
-    if (!(*pml4e & P)) { return false; } // ¹ÌÇÒ´ç
+    if (!(*pml4e & P)) { return false; } // ë¯¸í• ë‹¹
     // PDPTE
     uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
-    if (!(*pdpte & P)) { return false; } // ¹ÌÇÒ´ç
-    if (*pdpte & PS) { return false; } // 1GiB ÆäÀÌÁö Ãæµ¹
+    if (!(*pdpte & P)) { return false; } // ë¯¸í• ë‹¹
+    if (*pdpte & PS) { return false; } // 1GiB í˜ì´ì§€ ì¶©ëŒ
     // PDE
     uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
-    if (!(*pde & P)) { return false; } // ¹ÌÇÒ´ç
-    if (*pde & PS) { return false; } // 2MiB ÆäÀÌÁö Ãæµ¹
+    if (!(*pde & P)) { return false; } // ë¯¸í• ë‹¹
+    if (*pde & PS) { return false; } // 2MiB í˜ì´ì§€ ì¶©ëŒ
     // PTE
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
-    if (!(*pte & P)) { return false; } // ¹ÌÇÒ´ç
+    if (!(*pte & P)) { return false; } // ë¯¸í• ë‹¹
     *pte = (*pte & PTE_ADDR_MASK) | (flags & ~PTE_ADDR_MASK);
     return true;
 }
@@ -202,7 +202,7 @@ bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t
                 saved_flags <<= 60;
             }
             if (flags & VirtPageAllocator::RW) {
-                // ¾²±â °¡´É ¡æ CoW
+                // ì“°ê¸° ê°€ëŠ¥ â†’ CoW
                 uint64_t new_flags = saved_flags | VirtPageAllocator::P | VirtPageAllocator::PTE_COW;
                 if (flags & VirtPageAllocator::NX) new_flags |= VirtPageAllocator::NX;
                 if (alloc_virt_page(va, pa, new_flags) == ~0ULL) { 
@@ -211,7 +211,7 @@ bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t
                 source.change_flags(va, new_flags);
             }
             else {
-                // ÀĞ±â Àü¿ë ¡æ ±×³É °øÀ¯
+                // ì½ê¸° ì „ìš© â†’ ê·¸ëƒ¥ ê³µìœ 
                 if (alloc_virt_page(va, pa, flags) == ~0ULL) { 
                     return false; 
                 }
@@ -257,13 +257,13 @@ void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
     for (int i = 0; i < 512; i++) {
         if (pdpte_base[i] & VirtPageAllocator::P) {
             if (pdpte_base[i] & VirtPageAllocator::PS) { // 1GB Page
-                // [¼öÁ¤] 1GB ÆäÀÌÁö
+                // [ìˆ˜ì •] 1GB í˜ì´ì§€
                 uint64_t pa = (pdpte_base[i] & PTE_ADDR_MASK);
                 virt->phy_allocator->put_page(pa);
                 pdpte_base[i] = 0;
             }
             else {
-                // [¼öÁ¤] ´ÙÀ½ Å×ÀÌºí ÁÖ¼Ò °è»ê
+                // [ìˆ˜ì •] ë‹¤ìŒ í…Œì´ë¸” ì£¼ì†Œ ê³„ì‚°
                 uint64_t next_table_phys = pdpte_base[i] & PTE_ADDR_MASK;
                 uint64_t* pd_base = (uint64_t*)(HHDM_BASE + next_table_phys);
 
@@ -277,7 +277,7 @@ void free_pdpt(VirtPageAllocator* virt, uint64_t* pdpte_base) {
 
 void VirtPageAllocator::free_all_low_pages() {
     _lockv();
-    // User Space (0~256 ¿£Æ®¸®) Á¤¸®
+    // User Space (0~256 ì—”íŠ¸ë¦¬) ì •ë¦¬
     for (int i = 0; i < 256; i++) {
         uint64_t* pml4e = (uint64_t*)pml4 + i;
         if (*pml4e & P) {
@@ -293,7 +293,7 @@ void VirtPageAllocator::free_all_low_pages() {
     _unlockv();
 }
 void VirtPageAllocator::free_virt_pages(uint64_t va, uint64_t size) {
-    if (va & 0xFFF || size & 0xFFF) return; // Á¤·Ä ºÒ·®
+    if (va & 0xFFF || size & 0xFFF) return; // ì •ë ¬ ë¶ˆëŸ‰
     uint64_t pages = (size + 4095) / 4096;
     for (uint64_t i = 0; i < pages; i++) {
         phy_allocator->put_page(free_virt_page(va + i * 4096));
@@ -301,50 +301,50 @@ void VirtPageAllocator::free_virt_pages(uint64_t va, uint64_t size) {
 }
 
 uint64_t VirtPageAllocator::get_pte(uint64_t va) {
-    if (va & 0xFFF) return ~0ULL; // Á¤·Ä ºÒ·®
+    if (va & 0xFFF) return ~0ULL; // ì •ë ¬ ë¶ˆëŸ‰
     // PML4E
     uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
-    if (!(*pml4e & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pml4e & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     // PDPTE
     uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
-    if (!(*pdpte & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pdpte & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     if (*pdpte & PS) {
-		return *pdpte; // 1GiB ÆäÀÌÁö
+		return *pdpte; // 1GiB í˜ì´ì§€
     }
     // PDE
     uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
-    if (!(*pde & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pde & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     if (*pde & PS) {
-        return *pde; // 2MiB ÆäÀÌÁö
+        return *pde; // 2MiB í˜ì´ì§€
     }
     // PTE
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
-    if (!(*pte & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pte & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     uint64_t pa = *pte;
     return pa;
 }
 uint64_t VirtPageAllocator::get_pa(uint64_t va) {
-    if (va & 0xFFF) return ~0ULL; // Á¤·Ä ºÒ·®
+    if (va & 0xFFF) return ~0ULL; // ì •ë ¬ ë¶ˆëŸ‰
     // PML4E
     uint64_t* pml4e = (uint64_t*)pml4 + ((va >> 39) & 0x1FF);
-    if (!(*pml4e & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pml4e & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     // PDPTE
     uint64_t* pdpte = (uint64_t*)(HHDM_BASE + (*pml4e & ~0xFFFULL)) + ((va >> 30) & 0x1FF);
-    if (!(*pdpte & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pdpte & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     if (*pdpte & PS) {
         uint64_t pa = (*pdpte & ~0x3FFFFFFFULL) | (va & 0x3FFFFFFFULL);
-        return pa; // 1GiB ÆäÀÌÁö
+        return pa; // 1GiB í˜ì´ì§€
     }
     // PDE
     uint64_t* pde = (uint64_t*)(HHDM_BASE + (*pdpte & ~0xFFFULL)) + ((va >> 21) & 0x1FF);
-    if (!(*pde & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pde & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     if (*pde & PS) {
         uint64_t pa = (*pde & ~0x1FFFFFULL) | (va & 0x1FFFFFULL);
-        return pa; // 2MiB ÆäÀÌÁö
+        return pa; // 2MiB í˜ì´ì§€
     }
     // PTE
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
-    if (!(*pte & P)) { return ~0ULL; } // ¹ÌÇÒ´ç
+    if (!(*pte & P)) { return ~0ULL; } // ë¯¸í• ë‹¹
     uint64_t pa = *pte;
     return pa & PTE_ADDR_MASK;
 }

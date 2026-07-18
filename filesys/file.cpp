@@ -37,17 +37,17 @@ void File::open() {
 PathResolveResult resolve_path(const char* path, Partition* cwd_partition) {
     PathResolveResult result = { nullptr, nullptr };
 #define GET_PART(i) ((Partition*)(PARTITION_QUEUE_BASE + PARTITIONSTRUCT_SIZE * (i)))
-    // 1. [Case A] ÀÎµ¦½º Á¢±Ù (#N/...)
+    // 1. [Case A] ì¸ë±ìŠ¤ ì ‘ê·¼ (#N/...)
     if (path[0] == '#') {
         uint64_t idx = 0;
         int i = 1;
-        // ¼ıÀÚ ÆÄ½Ì
+        // ìˆ«ì íŒŒì‹±
         while (path[i] >= '0' && path[i] <= '9') {
             idx = idx * 10ull + (uint64_t)(path[i] - '0');
             i++;
         }
         if (idx > max_partition_index) return result;
-        // À¯È¿¼º Ã¼Å© (½½·ÔÀÌ »ç¿ë ÁßÀÎÁö)
+        // ìœ íš¨ì„± ì²´í¬ (ìŠ¬ë¡¯ì´ ì‚¬ìš© ì¤‘ì¸ì§€)
         Partition* p = GET_PART(idx);
         if (p->flags & 0b1) {
             result.target_partition = p;
@@ -58,10 +58,10 @@ PathResolveResult resolve_path(const char* path, Partition* cwd_partition) {
         return result;
     }
 
-    // 2. [Case B] ÇöÀç ÆÄÆ¼¼Ç ·çÆ® (@/...)
+    // 2. [Case B] í˜„ì¬ íŒŒí‹°ì…˜ ë£¨íŠ¸ (@/...)
     if (path[0] == '@') {
-        // [¼öÁ¤ 2] Ä¿³Î ¸ğµå(proc == nullptr) ¹æ¾î
-        if (!cwd_partition) return result; // Ä¿³ÎÀº @ »ç¿ë ºÒ°¡ (¶Ç´Â ±âº» ÆÄÆ¼¼Ç ¸®ÅÏ)
+        // [ìˆ˜ì • 2] ì»¤ë„ ëª¨ë“œ(proc == nullptr) ë°©ì–´
+        if (!cwd_partition) return result; // ì»¤ë„ì€ @ ì‚¬ìš© ë¶ˆê°€ (ë˜ëŠ” ê¸°ë³¸ íŒŒí‹°ì…˜ ë¦¬í„´)
 
         result.target_partition = cwd_partition;
         int i = 1;
@@ -70,8 +70,8 @@ PathResolveResult resolve_path(const char* path, Partition* cwd_partition) {
         return result;
     }
 
-    // 3. [Case C] º°¸í Á¢±Ù (Name:/...) È¤Àº »ó´ë °æ·Î
-    // Äİ·Ğ(:)ÀÌ ÀÖ´ÂÁö È®ÀÎ
+    // 3. [Case C] ë³„ëª… ì ‘ê·¼ (Name:/...) í˜¹ì€ ìƒëŒ€ ê²½ë¡œ
+    // ì½œë¡ (:)ì´ ìˆëŠ”ì§€ í™•ì¸
     int colon_idx = -1;
     for (int i = 0; path[i] != 0 && path[i] != '/'; i++) {
         if (path[i] == ':') {
@@ -86,11 +86,11 @@ PathResolveResult resolve_path(const char* path, Partition* cwd_partition) {
         memcpy(alias_buf, path, len);
         alias_buf[len] = 0;
 
-        // [¼öÁ¤ 3] ·çÇÁ Á¶°Ç (<=)
+        // [ìˆ˜ì • 3] ë£¨í”„ ì¡°ê±´ (<=)
         for (uint64_t i = 0; i <= max_partition_index; i++) {
             Partition* p = GET_PART(i);
 
-            // »ì¾ÆÀÖ´Â ÆÄÆ¼¼ÇÀÎÁö È®ÀÎ
+            // ì‚´ì•„ìˆëŠ” íŒŒí‹°ì…˜ì¸ì§€ í™•ì¸
             if (p->flags & 0b1) {
                 if (strncmp(p->alias, alias_buf, 11) == 0) {
                     result.target_partition = p;
@@ -104,18 +104,18 @@ PathResolveResult resolve_path(const char* path, Partition* cwd_partition) {
         return result;
     }
     if (!cwd_partition) return result;
-    // 4. [Case D] ±×³É »ó´ë °æ·Î (usr/bin/...)
+    // 4. [Case D] ê·¸ëƒ¥ ìƒëŒ€ ê²½ë¡œ (usr/bin/...)
     result.target_partition = cwd_partition;
     result.relative_path = path;
     return result;
 }
 File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id) {
-    // 1. °æ·Î ÇØ¼®
+    // 1. ê²½ë¡œ í•´ì„
     PathResolveResult res = resolve_path(path, cwd_part);
 
     if (res.target_partition == nullptr) return nullptr;
 
-    // 2. Base ID °áÁ¤
+    // 2. Base ID ê²°ì •
     uint64_t base_id = 0;
     bool is_partition_changed = (cwd_part != nullptr) && (res.target_partition != cwd_part);
     bool is_explicit_root = (res.relative_path != path);
@@ -124,7 +124,7 @@ File* vfs_open(const char* path, Partition* cwd_part, uint64_t cwd_id) {
         base_id = cwd_id;
     }
 
-    // 3. ÆÄÆ¼¼Ç¿¡°Ô À§ÀÓ (¸®ÅÏ Å¸ÀÔ File*)
+    // 3. íŒŒí‹°ì…˜ì—ê²Œ ìœ„ì„ (ë¦¬í„´ íƒ€ì… File*)
     return res.target_partition->open_file(res.relative_path, base_id);
 }
 
@@ -191,7 +191,7 @@ int vfs_chdir(const char* path, Partition* cwd_part, uint64_t cwd_id,
     return 0;
 }
 int STDIn::read(void* buf, uint32_t len) {
-    // ¾ÆÁ÷ ±¸Çö ¾ÈµÊ (Å°º¸µå ¹öÆÛ¿¡¼­ ÀĞ¾î¿À´Â ·ÎÁ÷ ÇÊ¿ä)
+    // ì•„ì§ êµ¬í˜„ ì•ˆë¨ (í‚¤ë³´ë“œ ë²„í¼ì—ì„œ ì½ì–´ì˜¤ëŠ” ë¡œì§ í•„ìš”)
     return -1;
 }
 void File::truncate() {
