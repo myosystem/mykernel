@@ -495,4 +495,18 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	{
 		const char* path = (const char*)frame->rdi;
 		Partition* new_part = nullptr;
-		uint64_t   new_
+		uint64_t   new_cluster = 0;
+		int ret = vfs_chdir(path, now_process->current_partition, now_process->cwd_cluster,
+			&new_part, &new_cluster);
+		if (ret == 0) {
+			now_process->current_partition = new_part;
+			now_process->cwd_cluster = new_cluster;
+		}
+		frame->rax = ret;
+		break;
+	}
+	default:
+		frame->rax = -1; // 반환값: 알 수 없는 시스템 콜
+		break;
+	}
+}

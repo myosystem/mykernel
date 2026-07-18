@@ -441,7 +441,7 @@ void Process::msg_recv(msg_t msg,bool blocking) {
     if (msgq.get_size() > ((msg.sender_pid == ((uint64_t)-1)) ? MAX_MESSAGE_QUEUE_INT : MAX_MESSAGE_QUEUE_SIZE)) {
         if (blocking) {
 			waiting_msgq.enqueue(msg.sender_pid); // 메시지 보낸 프로세스 PID 대기 큐에 추가
-            call_msg_block();
+            simple_wait();
         }
         else {
 			return; // 큐가 가득 찼으면 메시지 버리기
@@ -450,6 +450,15 @@ void Process::msg_recv(msg_t msg,bool blocking) {
     msgq.enqueue(msg);
 }
 bool Process::msg_pop(msg_t* msg) {
+    while (!waiting_msgq.isEmpty()) {
+		uint64_t pid = waiting_msgq.dequeue();
+		Process* p = GetProcess(pid);
+		if (p != idle_process) {
+			p->state &= ~PROCESS_STATE_WAITING; // 대기 상태 해제
+			add_process(pid); // 프로세스 스케줄링 큐에 추가
+			break;
+		}
+	}
     if (msgq.isEmpty()) {
         return false;
     }
