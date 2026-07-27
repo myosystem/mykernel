@@ -1,4 +1,4 @@
-#include "arch/xhci_c.h"
+#include "driver/xhci_c.h"
 #include "mm/allocator"
 #include "util/util.h"
 #include "driver/xhci_p.h"

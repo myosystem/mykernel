@@ -1,7 +1,7 @@
 #ifndef __XHCI_C_H__
 #define __XHCI_C_H__
 
-#include "arch/controller.h"
+#include "util/controller.h"
 #include "arch/pci.h"
 #include "util/size.h"
 #include "util/memory.h"

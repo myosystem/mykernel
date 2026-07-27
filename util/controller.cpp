@@ -1,4 +1,4 @@
-#include "arch/controller.h"
+#include "util/controller.h"
 #include "util/size.h"
 void* Controller::operator new(size_t size) {
     uint64_t mem = CONTROLLER_QUEUE_BASE;
