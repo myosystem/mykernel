@@ -1,8 +1,7 @@
 #include "kernel/kernel.h"
-#include "util/memory.h"
-#include "mm/allocator"
+#include "kernel/process.h"
 #include "util/util.h"
-#include "kernel/console.h"
+#include "mm/allocator"
 #include "debug/log.h"
 #include "arch/idt.h"
 #include "arch/msr.h"
@@ -10,16 +9,12 @@
 #include "arch/ioapic.h"
 #include "arch/lapic.h"
 #include "arch/handler.h"
-#include "arch/ahci_c.h"
-#include "kernel/timer_handler.h"
+#include "driver/ahci_c.h"
 #include "arch/pci.h"
-#include "filesys/gpt.h"
-#include "filesys/FAT32.h"
 #include "driver/disk.h"
-#include "driver/ahci.h"
 #include "driver/nvme.h"
-#include "kernel/process.h"
-#include "arch/xhci_c.h"
+#include "driver/xhci_c.h"
+#include "driver/e1000.h"
 
 //pml4
 //256 partition data heap       0xFFFF800000000000
@@ -76,9 +71,10 @@ void init_interrupts() {
     load_idt();
 }
 vector<Controller*>* controllers;
-uint8_t controller_buf[sizeof(vector<Controller*>)];
+vector<Controller*>* netdevices;
+alignas(vector<Controller*>) uint8_t controller_buf[sizeof(vector<Controller*>)];
 vector<Disk*>* disks;
-uint8_t disk_buf[sizeof(vector<Disk*>)];
+alignas(vector<Disk*>) uint8_t disk_buf[sizeof(vector<Disk*>)];
 bool booting = true;
 //일단 콘솔부터
 bool g_pmc_ok = false;
@@ -155,6 +151,12 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
                         // EHCI 발견
                     }
                 }
+				else if (class_code == 0x02 && subclass == 0x00) {
+					// 네트워크 컨트롤러
+					E1000* netdev = new E1000(bus, slot, func);
+                    netdev->init();
+					netdevices->push_back(netdev);
+				}
             }
         }
     }

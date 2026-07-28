@@ -170,7 +170,7 @@ public:
     uint64_t time_slice;
     uint64_t parent;
     VirtPageAllocator* pallocator;
-    uint8_t allocator_buffer[sizeof(VirtPageAllocator)];
+    alignas(VirtPageAllocator) uint8_t allocator_buffer[sizeof(VirtPageAllocator)];
     uint64_t code_va_base;
     uint64_t* kernel_stack;
     uint64_t heap_top;

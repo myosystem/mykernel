@@ -1,7 +1,7 @@
 #ifndef __XHCI_P_H__
 #define __XHCI_P_H__
 #include "driver/protocol.h"
-#include "arch/xhci_c.h"
+#include "driver/xhci_c.h"
 enum class Direction { In, Out, None };
 class XHCIProtocol : public Protocol {
 public:
@@ -31,8 +31,8 @@ private:
     XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>* device;    // 부모 xHCI 장치 참조
     XHCIRing* bulk_in;
     XHCIRing* bulk_out;
-	uint8_t bulk_in_buff[sizeof(XHCIRing)];
-    uint8_t bulk_out_buff[sizeof(XHCIRing)];
+	alignas(XHCIRing) uint8_t bulk_in_buff[sizeof(XHCIRing)];
+    alignas(XHCIRing) uint8_t bulk_out_buff[sizeof(XHCIRing)];
     uint8_t slot_id;
     uint8_t dci_in;
     uint8_t dci_out;

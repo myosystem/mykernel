@@ -105,13 +105,13 @@ void mmap_entry::operator delete(void* ptr) {
     entry->flags = 0; // 사용 중이 아님으로 표시
 }
 queue<size_t>* process_queue;
-uint8_t* process_queue_buf[sizeof(queue<size_t>)];
+alignas(queue<size_t>) uint8_t process_queue_buf[sizeof(queue<size_t>)];
 
 HeapTree<KEvent>* time_event;
-uint8_t* time_event_buf[sizeof(HeapTree<KEvent>)];
+alignas(HeapTree<KEvent>) uint8_t time_event_buf[sizeof(HeapTree<KEvent>)];
 
 vector<KEvent>* xhci_event;
-uint8_t* xhci_event_buf[sizeof(vector<KEvent>)];
+alignas(vector<KEvent>) uint8_t xhci_event_buf[sizeof(vector<KEvent>)];
 
 Process* now_process = 0;
 
@@ -207,7 +207,7 @@ void Process::setHeap() {
 	heap_top = code_va_base;    // 힙은 비어있는 상태로 시작
 }
 uint64_t sig_page_phys;
-uint8_t idle_process_buf[sizeof(Process)];
+alignas(Process) uint8_t idle_process_buf[sizeof(Process)];
 Process* idle_process;
 __attribute__((naked))
 void idle_process_func();

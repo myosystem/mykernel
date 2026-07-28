@@ -281,7 +281,7 @@ public:
     uint16_t max_packet_size;
     uint64_t device_id;
     XHCIRing* ep0_ring;
-    uint8_t ep0_ring_buff[sizeof(XHCIRing)];
+    alignas(XHCIRing) uint8_t ep0_ring_buff[sizeof(XHCIRing)];
     union {
         struct {
             uint8_t config_value;
@@ -332,8 +332,8 @@ private:
     volatile uint8_t* mmio_base;         // BAR5 가상 주소
     uint64_t  bar_size;
     XHCIRing* cmd_ring;
-    uint8_t cmd_ring_buff[sizeof(XHCIRing)];
-	uint8_t event_ring_buff[sizeof(EventRing)];
+    alignas(XHCIRing) uint8_t cmd_ring_buff[sizeof(XHCIRing)];
+	alignas(EventRing) uint8_t event_ring_buff[sizeof(EventRing)];
     vector<XHCIDevice<InputContext32, DeviceContext32, SlotContext32, EndpointContext32>*> devices32;
     vector<XHCIDevice<InputContext64, DeviceContext64, SlotContext64, EndpointContext64>*> devices64;
 	vector<PendingCommand> pending_cmds;

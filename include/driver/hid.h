@@ -45,7 +45,7 @@ private:
     bool is_keycode_pressed(uint32_t keycode);
     vector<uint32_t> prev_keycodes;
 };
-#include "arch/xhci_c.h"
+#include "driver/xhci_c.h"
 
 template<typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
 class XHCIHIDDevice : public HIDDevice {
@@ -57,7 +57,7 @@ protected:
 private:
     XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>* xhci_dev;
     XHCIRing* ring;
-    uint8_t   ring_buff[sizeof(XHCIRing)];
+    alignas(XHCIRing) uint8_t ring_buff[sizeof(XHCIRing)];
     uint8_t   dci;
     uint64_t  _queue_trb();
 	void      _push_kevent(uint64_t trb_phys);
