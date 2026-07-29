@@ -52,3 +52,5 @@ unsigned long long simple_wait() {
         ::: "rax", "rcx", "r11", "memory"
     );
 }
+uint16_t swap16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
+uint32_t swap32(uint32_t v) { return ((v >> 24) & 0xff) | ((v << 8) & 0xff0000) | ((v >> 8) & 0xff00) | ((v << 24) & 0xff000000); }
