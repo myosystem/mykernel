@@ -2,7 +2,7 @@
 #define __AHCI_H__
 #include "util/size.h"
 #include "driver/disk.h"
-#include "arch/ahci_c.h"
+#include "driver/ahci_c.h"
 
 // ─────────────────────────────────────────────────────────────
 //  FIS / Command 구조체

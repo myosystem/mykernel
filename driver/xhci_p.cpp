@@ -1,5 +1,5 @@
 #include "driver/xhci_p.h"
-#include "arch/xhci_c.h"
+#include "driver/xhci_c.h"
 #include "util/util.h"
 
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>

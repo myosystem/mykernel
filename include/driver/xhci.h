@@ -2,7 +2,7 @@
 #define __XHCI_H__
 #include "driver/disk.h"
 #include "driver/xhci_p.h"
-#include "arch/xhci_c.h"
+#include "driver/xhci_c.h"
 
 class XHCIDisk : public Disk {
 public:
