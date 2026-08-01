@@ -20,7 +20,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
     if (!(error_code & (1ull << 2ull))) {
         uint64_t pml4_entry = (cr2 >> 39) & 0x1FF;
-        if (256 <= pml4_entry && pml4_entry <= 270) {
+        if (PML4::PML4_POOL_GUARD_LOW < pml4_entry && pml4_entry < PML4::PML4_POOL_GUARD_HIGH) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
             memset((void*)(cr2 & ~0xFFFULL), 0, PageSize);      // Todo : 새로운 new방식 특성상 이거 필요없다 싹다 교체하고 바꿔야될듯
             return;
