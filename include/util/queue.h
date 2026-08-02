@@ -3,6 +3,7 @@
 #include "util/size.h"
 #include "mm/allocator"
 #include "debug/log.h"
+#include "util/util.h"   // placement new (operator new(size_t, void*))
 template <typename T>
 class queue {
 	public:
@@ -15,6 +16,7 @@ class queue {
 		size = 0;
     }
     constexpr ~queue() {
+        while (!isEmpty()) dequeue();   // 남은 원소 소멸자 호출 (Page ref 등 자원 해제)
         void* curr = front_page;
         while (curr != nullptr) {
             void* next = *((void**)curr);
@@ -34,13 +36,15 @@ class queue {
             back_index = 0;
         }
 
-        *((T*)((uint8_t*)back_page + back_index + 8)) = item;
+        new ((void*)((uint8_t*)back_page + back_index + 8)) T(item);   // placement new: 복사 생성 (non-trivial T 안전)
         back_index += aligned_size;
         size++;
     }
     constexpr T dequeue() {
         // isEmpty() 체크는 호출하는 쪽이나 여기서 확실히!
-        T item = *((T*)((uint8_t*)front_page + front_index + 8));
+        T* _slot = (T*)((uint8_t*)front_page + front_index + 8);
+        T item = (T&&)(*_slot);   // 슬롯에서 이동
+        _slot->~T();              // 슬롯의 T 소멸 (moved-from 정리, Page ref 등)
         size_t aligned_size = (sizeof(T) + 7) & ~7;
         front_index += aligned_size;
         size--;
