@@ -1,7 +1,7 @@
 #include "net/icmp.h"
 #include "net/ip.h"
 static ICMPSocket* icmp_socket[65535];   // ICMP demux: icmp id -> socket
-ICMPSocket* ICMPSocket::Create(uint32_t src_ip) {
+ICMPSocket* ICMPSocket::Create() {
 	for (uint32_t i = 0; i < 65535; i++) {
 		if (!icmp_socket[i]) {               // 빈 슬롯 찾고 그때만 할당
 			ICMPSocket* socket = new ICMPSocket();

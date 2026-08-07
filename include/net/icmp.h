@@ -33,7 +33,7 @@ protected:
     void recv(uint32_t& src_ip, uint32_t& dst_ip, string& data) override;
 public:
     ~ICMPSocket() override;
-    static ICMPSocket* Create(uint32_t src_ip);
+    static ICMPSocket* Create();
     static void deliver(uint32_t src, uint32_t dst, string& msg);   // ICMP 헤더 벗기고 echo응답/소켓demux
 };
 #endif // __ICMP_H__
