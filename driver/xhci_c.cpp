@@ -695,8 +695,8 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
     volatile uint32_t portsc = *portsc_reg;
 
     // xHCI 전체 상태
-    uart_print("USBSTS="); uart_print_hex(*usbsts); uart_print("\n");
-    uart_print("IMAN="); uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
+    //uart_print("USBSTS="); uart_print_hex(*usbsts); uart_print("\n");
+    //uart_print("IMAN="); uart_print_hex(*(volatile uint32_t*)(intr_base)); uart_print("\n");
 
     if (booting) {
         while(1) {

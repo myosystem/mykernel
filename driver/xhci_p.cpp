@@ -6,6 +6,7 @@ template <typename InputContext, typename DeviceContext, typename SlotContext, t
 bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext>::execute_transaction(void* cmd, size_t clen, void* data_pa, size_t dlen, Direction dir) {
     // 1단계: CBW 생성 및 전송 (Bulk-OUT)
     uint64_t phys = (uint64_t)cbw - MMIO_BASE; // 가상 주소를 물리 주소로 변환
+    cbw->lun = 0;
     cbw->signature = 0x43425355; // "USBC"
     cbw->tag = 0xDEADBEEF;       // 명령 식별용 (나중에 CSW랑 비교)
     cbw->data_transfer_len = dlen;
@@ -67,6 +68,22 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
     device->controller->wait_command(bulk_in_phy, slot_id, device->get_port_id(), 32, dci_in); // Transfer Event 이벤트 대기 (Type 32)
 
     // CSW 서명과 상태 체크 (0 = Success)
+    if (csw->status == 0x1) {
+        uint8_t sense_cmd[6] = { 0x03, 0, 0, 0, 18, 0 };  // REQUEST SENSE, Allocation Length=18
+        uint8_t* sense_data = (uint8_t*)phy_page_allocator->alloc_phy_page();
+        execute_transaction(sense_cmd, 6, sense_data, 18, Direction::In);
+        sense_data += HHDM_BASE;
+        uint8_t sense_key = sense_data[2] & 0x0F;
+        uint8_t asc = sense_data[12];
+        uint8_t ascq = sense_data[13];
+        uart_print("CSW Error : 0x");
+        uart_print_hex(sense_key);
+        uart_print(" , 0x");
+        uart_print_hex(asc);
+        uart_print(" , 0x");
+        uart_print_hex(ascq);
+        uart_print("\n");
+    }
     return (csw->signature == 0x53425355 && csw->status == 0);
 }
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
