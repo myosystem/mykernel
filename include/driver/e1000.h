@@ -210,7 +210,7 @@ private:
     alignas(TXRing) uint8_t ring_buf[sizeof(TXRing)];
     alignas(RXRing) uint8_t rx_ring_buf[sizeof(RXRing)];
 public:
-    E1000(uint16_t bus, uint16_t slot, uint16_t func, uint32_t ip);
+    E1000(uint16_t bus, uint16_t slot, uint16_t func);
     ~E1000() override;
     void init() override;
     void hw_send(string& packet) override;
