@@ -4,6 +4,9 @@
 
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
 bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext>::execute_transaction(void* cmd, size_t clen, void* data_pa, size_t dlen, Direction dir) {
+    while (__atomic_test_and_set(&busy, __ATOMIC_ACQUIRE)) {
+        yield();
+    }
     // 1단계: CBW 생성 및 전송 (Bulk-OUT)
     uint64_t phys = (uint64_t)cbw - MMIO_BASE; // 가상 주소를 물리 주소로 변환
     cbw->lun = 0;
@@ -28,7 +31,7 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
     uint32_t ctrl = (1 << 10) | (1 << 5); // TRB Type 1
 
     trb.control = ctrl;
-    TRB* bulk_out_phy = (TRB*)bulk_out->push(trb); // IOC=1
+    TRB* bulk_out_phy = (TRB*)bulk_out->push(trb);
     device->controller->doorbell_base[slot_id] = dci_out;
     device->controller->wait_command(bulk_out_phy, slot_id, device->get_port_id(), 32, dci_out);
 
@@ -66,7 +69,9 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
     TRB* bulk_in_phy = (TRB*)bulk_in->push(trb);
     device->controller->doorbell_base[slot_id] = dci_in;
     device->controller->wait_command(bulk_in_phy, slot_id, device->get_port_id(), 32, dci_in); // Transfer Event 이벤트 대기 (Type 32)
-
+    uint32_t csw_sig = csw->signature;
+    uint8_t  csw_status = csw->status;
+    __atomic_clear(&busy, __ATOMIC_RELEASE);
     // CSW 서명과 상태 체크 (0 = Success)
     if (csw->status == 0x1) {
         uint8_t sense_cmd[6] = { 0x03, 0, 0, 0, 18, 0 };  // REQUEST SENSE, Allocation Length=18
@@ -84,7 +89,7 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
         uart_print_hex(ascq);
         uart_print("\n");
     }
-    return (csw->signature == 0x53425355 && csw->status == 0);
+    return (csw_sig == 0x53425355 && csw_status == 0);
 }
 template <typename InputContext, typename DeviceContext, typename SlotContext, typename EndpointContext>
 bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext>::initialize() {
