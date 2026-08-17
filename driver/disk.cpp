@@ -76,6 +76,7 @@ void Disk::init() {
     }
 }
 void Disk::read_bytes(uint64_t addr, void* buf, uint64_t size) {
+    while (__atomic_test_and_set(&busy, __ATOMIC_ACQUIRE)) yield();
     uint8_t* out = (uint8_t*)buf;
     while (size > 0) {
         uint64_t page = addr / 0x1000;
@@ -103,12 +104,6 @@ void Disk::read_bytes(uint64_t addr, void* buf, uint64_t size) {
             }
             buffer = buf.buf;
 			int num = read_sector(page * (0x1000 / SECTOR_SIZE), 0x1000 / SECTOR_SIZE, buffer - MMIO_BASE);
-            uart_print("code ");
-            uart_print(num);
-            uart_print("\n");
-            uart_print("disk id ");
-            uart_print(disk_id);
-            uart_print("\n");
             if (num) {
                 // 읽기 실패 처리 (예: 디스크 오류)
                 uart_print("Disk read error at page ");
@@ -132,8 +127,10 @@ void Disk::read_bytes(uint64_t addr, void* buf, uint64_t size) {
         addr += copy_size;
         out += copy_size;
     }
+    __atomic_clear(&busy, __ATOMIC_RELEASE);
 }
 void Disk::write_bytes(uint64_t addr, const void* buf, uint64_t size) {
+    while (__atomic_test_and_set(&busy, __ATOMIC_ACQUIRE)) yield();
     const uint8_t* in = (const uint8_t*)buf;
 
     while (size > 0) {
@@ -174,21 +171,7 @@ void Disk::write_bytes(uint64_t addr, const void* buf, uint64_t size) {
         addr += copy_size;
         in += copy_size;
     }
-}
-void* Disk::operator new(size_t size) {
-	uint64_t mem = DISK_QUEUE_BASE;
-    uint64_t index = 0;
-    while (((Disk*)(mem))->state == 1) {
-		mem += DISKSTRUCT_SIZE;
-        index++;
-    }
-    ((Disk*)(mem))->state = 1;
-    ((Disk*)(mem))->disk_id = index;
-    return (void*)mem;
-}
-void Disk::operator delete(void* ptr) {
-    Disk* p = (Disk*)ptr;
-    p->state = 0;
+    __atomic_clear(&busy, __ATOMIC_RELEASE);
 }
 int Disk::read_sector(uint64_t lba, uint32_t count, void* buf) {
 	return -100; // 기본 Disk는 지원 안 함
