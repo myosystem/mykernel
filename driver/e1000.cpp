@@ -3,7 +3,7 @@
 #include "arch/pci.h"
 #include "arch/handler.h"
 #include "arch/lapic.h"
-E1000::E1000(uint16_t bus, uint16_t slot, uint16_t func, uint32_t ip) : Controller(bus, slot, func), Ethernet(ip) {
+E1000::E1000(uint16_t bus, uint16_t slot, uint16_t func) : Controller(bus, slot, func), Ethernet() {
 
 }
 E1000::~E1000() {
