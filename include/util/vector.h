@@ -37,24 +37,42 @@ public:
         new_index = 0;
         arr_size = 0;
         for (size_t i = 0; i < other.arr_size; i++)
-            push_back(const_cast<vector&>(other)[i]);
+            push_back(other[i]);
     }
     ~vector() {
+        size_t items_per_page = (PageSize - 8) / ((sizeof(T) + 7) & ~7);
+        size_t count = 0;
         void* curr = front_page;
         while (curr != nullptr) {
             void* next = *((void**)curr);
+            size_t items_in_this_page = (count + items_per_page > arr_size) ? (arr_size - count) : items_per_page;
+
+            for (size_t i = 0; i < items_in_this_page; i++) {
+                T* obj = (T*)((uint8_t*)curr + 8 + i * ((sizeof(T) + 7) & ~7));
+                obj->~T();
+            }
             phy_page_allocator->put_page((uint64_t)curr - HHDM_BASE);
             curr = next;
+            count += items_in_this_page;
         }
     }
     vector& operator=(const vector& other) {
         if (this == &other) return *this;
         // 기존 페이지 해제
+        size_t items_per_page = (PageSize - 8) / ((sizeof(T) + 7) & ~7);
+        size_t count = 0;
         void* curr = front_page;
         while (curr != nullptr) {
             void* next = *((void**)curr);
+            size_t items_in_this_page = (count + items_per_page > arr_size) ? (arr_size - count) : items_per_page;
+
+            for (size_t i = 0; i < items_in_this_page; i++) {
+                T* obj = (T*)((uint8_t*)curr + 8 + i * ((sizeof(T) + 7) & ~7));
+                obj->~T();
+            }
             phy_page_allocator->put_page((uint64_t)curr - HHDM_BASE);
             curr = next;
+            count += items_in_this_page;
         }
         // 새로 복사
         front_page = (void*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE);
@@ -82,6 +100,46 @@ public:
         new_index += aligned_size;
         arr_size++;
     }
+    void insert(const T& item, size_t offset) {
+        if (offset > arr_size) {
+            uart_print("vector error!!");
+            __asm__ __volatile__("hlt");
+        }
+        size_t aligned_size = (sizeof(T) + 7) & ~7;
+        size_t items_per_page = (PageSize - 8) / aligned_size;
+        size_t page_index = offset / items_per_page;
+        size_t item_index = (offset % items_per_page) * aligned_size;
+        void* page = front_page;
+        for (size_t i = 0; i < page_index; i++) {
+            page = *((void**)page);
+            if (page == 0) {
+                uart_print("vector error!!");
+                __asm__ __volatile__("hlt");
+            }
+        }
+        T temp = item;
+        for (size_t idx = offset; idx < arr_size; idx++) {
+            T* slot = (T*)((uint8_t*)page + item_index + 8);
+            T carry = (T&&)(*slot);
+            *slot = (T&&)temp;
+            temp = (T&&)carry;
+            item_index += aligned_size;
+            if (item_index + aligned_size > PageSize - 8) {
+                page = *((void**)page);
+                item_index = 0;
+            }
+        }
+        if (new_index + aligned_size > PageSize - 8) {
+            void* new_page = (void*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE);
+            *((void**)new_page) = nullptr;
+            *((void**)back_page) = new_page;
+            back_page = new_page;
+            new_index = 0;
+        }
+        ::new ((void*)((uint8_t*)back_page + new_index + 8)) T((T&&)temp);
+        new_index += aligned_size;
+        arr_size++;
+    }
     void erase(size_t index) {
         if (index >= arr_size) {
             uart_print("vector error!!");
@@ -89,14 +147,29 @@ public:
         }
         size_t aligned_size = (sizeof(T) + 7) & ~7;
         size_t items_per_page = (PageSize - 8) / aligned_size;
-
-        // 마지막 요소로 덮어쓰기
-        if (index != arr_size - 1) {
-            (*this)[index] = (*this)[arr_size - 1];
+        size_t page_index = index / items_per_page;
+        size_t item_index = (index % items_per_page) * aligned_size;
+        void* page = front_page;
+        for (size_t i = 0; i < page_index; i++) {
+            page = *((void**)page);
+            if (page == 0) {
+                uart_print("vector error!!");
+                __asm__ __volatile__("hlt");
+            }
         }
-        arr_size--;
-
-        // new_index 업데이트
+        T* last_slot = nullptr;
+        for (size_t idx = index; idx < arr_size; idx++) {
+            T* slot = (T*)((uint8_t*)page + item_index + 8);
+            if (last_slot)
+                *last_slot = (T&&)*slot;
+            last_slot = slot;
+            item_index += aligned_size;
+            if (item_index + aligned_size > PageSize - 8) {
+                page = *((void**)page);
+                item_index = 0;
+            }
+        }
+        last_slot->~T();
         if (new_index >= aligned_size) {
             new_index -= aligned_size;
         }
@@ -115,13 +188,15 @@ public:
         else {
             new_index = 0;
         }
+        arr_size--;
     }
-    T& operator[](size_t index) {
+    const T& operator[](size_t index) const {
         if (index >= arr_size) {
-			return *((T*)nullptr); // 범위 초과 시 nullptr 반환
-		}
-        size_t aliged_size = (sizeof(T) + 7) & ~7;
-        size_t items_per_page = (PageSize - 8) / aliged_size;
+            uart_print("vector error!!");
+            __asm__ __volatile__("hlt");
+        }
+        size_t aligned_size = (sizeof(T) + 7) & ~7;
+        size_t items_per_page = (PageSize - 8) / aligned_size;
         size_t page_index = index / items_per_page;
         size_t item_index = index % items_per_page;
         void* curr = front_page;
@@ -132,11 +207,35 @@ public:
                 __asm__ __volatile__("hlt");
             }
         }
-        if (curr == back_page && item_index * aliged_size >= new_index) {
+        if (curr == back_page && item_index * aligned_size >= new_index) {
             uart_print("vector error!!");
             __asm__ __volatile__("hlt");
         }
-		T* result = (T*)((uint8_t*)curr + 8 + item_index * aliged_size);
+        T* result = (T*)((uint8_t*)curr + 8 + item_index * aligned_size);
+        return *result;
+    }
+    T& operator[](size_t index) {
+        if (index >= arr_size) {
+			uart_print("vector error!!");
+			__asm__ __volatile__("hlt");
+		}
+        size_t aligned_size = (sizeof(T) + 7) & ~7;
+        size_t items_per_page = (PageSize - 8) / aligned_size;
+        size_t page_index = index / items_per_page;
+        size_t item_index = index % items_per_page;
+        void* curr = front_page;
+        for (size_t i = 0; i < page_index; i++) {
+            curr = *((void**)curr);
+            if (curr == 0) {
+                uart_print("vector error!!");
+                __asm__ __volatile__("hlt");
+            }
+        }
+        if (curr == back_page && item_index * aligned_size >= new_index) {
+            uart_print("vector error!!");
+            __asm__ __volatile__("hlt");
+        }
+		T* result = (T*)((uint8_t*)curr + 8 + item_index * aligned_size);
         return *result;
     }
     size_t size() const {
