@@ -140,6 +140,20 @@ public:
         }
     }
 
+    void write_at(uint64_t off, const string& str) {
+        uint8_t* page = (uint8_t*)str.front_page;
+        uint64_t pstart = str.head;
+        uint64_t pend = (page == str.back_page) ? str.tail : str.PGSZ;
+        uint64_t writed = 0;
+        while (writed < str.size()) {
+            write_at(off, page + pstart, (pend - pstart));
+            off += (pend - pstart);
+            writed += (pend - pstart);
+            page = *((uint8_t**)page); pstart = str.LINK;
+            pend = (page == str.back_page) ? str.tail : str.PGSZ;
+        }
+    }
+
     // 다른 string src의 [off, off+n)을 이 string 뒤에 이어붙임 (임시 없이)
     void append_from(const string& src, uint64_t off, uint64_t n) {
         void* pg; uint32_t idx, pend; src.locate(off, pg, idx, pend);
