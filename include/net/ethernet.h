@@ -38,13 +38,15 @@ protected:
 	uint8_t* find_mac(uint32_t ip);
 	void add_arp(uint32_t ip);
 public:
-	Ethernet(uint32_t ip)
-		: NetDevice(ip), src_mac() {
+	Ethernet()
+		: NetDevice(), src_mac() {
+		
 	}
 	void init() override = 0;
 	void send(string& packet, uint32_t dst_ip, uint16_t ethertype) override;
 	void recv(string& packet);
 	virtual void hw_send(string& packet) = 0;
 	uint64_t max_packet_size() override { return 1500; }
+	void get_mac(char* mac_buf) override { memcpy(mac_buf, src_mac, 6); }
 };
 #endif // __ETHERNET_H__
