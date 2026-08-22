@@ -29,8 +29,7 @@ private:
     ICMPSocket() : Socket() {}        // type_=1 (ICMP)
 protected:
     uint16_t seq = 0;
-    void sendto(uint32_t dst_ip, string& data) override;
-    void recv(uint32_t& src_ip, uint32_t& dst_ip, string& data) override;
+    void sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* route = nullptr) override;
 public:
     ~ICMPSocket() override;
     static ICMPSocket* Create();
