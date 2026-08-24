@@ -25,13 +25,6 @@ UDPSocket* UDPSocket::Create(uint64_t port) {
 UDPSocket::~UDPSocket() {
 	ports[udp_port_] = nullptr;
 }
-struct udp_pseudo_header {
-	uint32_t src_ip;
-	uint32_t dst_ip;
-	uint8_t  zero;      // 0 고정
-	uint8_t  protocol;  // IPPROTO_UDP (17)
-	uint16_t length;     // udp_header.length랑 같은 값
-} __attribute__((packed));
 void UDPSocket::deliver(uint32_t src, uint32_t dst, string& msg) {
 	if (msg.size() < sizeof(udp_header)) return;
 	udp_header udp;
@@ -46,7 +39,7 @@ void UDPSocket::deliver(uint32_t src, uint32_t dst, string& msg) {
 		socket->recv_queue.enqueue(m);
 		if (!socket->wait_queue.isEmpty() && (socket->state & SOCKET_FLAG_BLOCKING)) add_process(socket->wait_queue.dequeue());
 		if (socket->state & SOCKET_FLAG_MESSAGE) {
-			msg_t msg;
+			msg_t msg = {};
 			msg.type = MSG_SOCKET_DATA;
 			msg.payload.params.arg[0] = socket->id;
 			msg.sender_pid = -1;
@@ -63,9 +56,12 @@ void UDPSocket::sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* 
 		}
 		route = &route_;
 	}
+	if (route->dev == nullptr) {
+		return;
+	}
 	udp_header header = { swap16(udp_port_), swap16(dst_port), swap16(data.size() + sizeof(udp_header)), 0};
 	data.prepend((uint8_t*)&header, sizeof(header));
-	udp_pseudo_header pseudo;
+	pseudo_header pseudo;
 	pseudo.src_ip = swap32(route->dev->src_ip());
 	pseudo.dst_ip = swap32(dst_ip);
 	pseudo.zero = 0;

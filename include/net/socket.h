@@ -16,6 +16,13 @@ struct RxMsg {                 // 수신 메시지 (계층 파싱 결과)
 	uint32_t dst_port;
 	string   data;
 };
+struct pseudo_header {
+	uint32_t src_ip;
+	uint32_t dst_ip;
+	uint8_t  zero;
+	uint8_t  protocol;
+	uint16_t length;
+} __attribute__((packed));
 class Socket : public NewObject<pml4_addr(PML4::SOCKET_HEAP),0x200,nullptr,nullptr> {
 protected:
 	queue<RxMsg> recv_queue;
@@ -40,7 +47,7 @@ public:
 	bool set_device(uint64_t device_id);
 	void send(string data) { sendto(dst_ip_, dst_port_, data, &route); }
 	virtual void sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* route = nullptr) = 0;
-	virtual uint64_t recv(RxMsg& data);
+	virtual uint64_t recv(RxMsg& data, size_t& max_len);
 	uint64_t msg_pid;
 };
 #endif // __SOCKET_H__
