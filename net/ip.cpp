@@ -1,6 +1,9 @@
 #include "net/ip.h"
-#include "net/netdevice.h"
 #include "net/icmp.h"
+#include "net/udp.h"
+#include "net/tcp.h"
+#include "net/ethernet.h"
+#include "net/netdevice.h"
 uint32_t ipaddr(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
 	return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | (uint32_t)d;
 }
@@ -18,10 +21,9 @@ uint16_t ip_next_id() {
     return ip_id++; 
 }
 namespace IPv4 {
-	void send(uint32_t dst, uint8_t proto, string& payload, uint8_t ttl) {
-		Route* route = RouteTable::find(dst);
-		if (route == nullptr) return; // 경로 없음
+	void send(Route* route, uint32_t dst, uint8_t proto, string& payload, uint8_t ttl) {
 		uint32_t next_hop = route->gateway ? route->gateway : dst;   // off-link면 게이트웨이, on-link면 dst
+		if (!route->dev) return;
 		uint64_t max_packet_size = route->dev->max_packet_size();
 		if (payload.size() + sizeof(ipv4_header) > max_packet_size) {
 			ipv4_header header;
@@ -78,7 +80,9 @@ namespace IPv4 {
 		// TODO: 조각(fragment) 재조립 — 지금은 완전한 패킷만
 		string msg = packet.substr(ihl, total - ihl);         // transport 메시지 (IP 헤더 벗김)
 		switch (ip.protocol) {
-		case IPPROTO_ICMP: ICMPSocket::deliver(src, dst, msg); break;
+		case IPPROTO_ICMP:	ICMPSocket::deliver(src, dst, msg); break;
+		case IPPROTO_UDP:	UDPSocket::deliver(src, dst, msg); break;
+		case IPPROTO_TCP:  TCPSocket::deliver(src, dst, msg); break;
 		}
 	}
 }
