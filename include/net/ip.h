@@ -22,12 +22,12 @@ struct ipv4_header {
     uint32_t src_ip;         // 출발지 IP (network order)
     uint32_t dst_ip;         // 목적지 IP
 } __attribute__((packed));
-
+struct Route;
 uint16_t ip_checksum(const void* data, int len);
 uint32_t ipaddr(uint8_t a, uint8_t b, uint8_t c, uint8_t d);
 uint16_t ip_next_id();
 namespace IPv4 {
-    void send(uint32_t dst, uint8_t proto, string& payload, uint8_t ttl);
+    void send(Route* route, uint32_t dst, uint8_t proto, string& payload, uint8_t ttl);
     void recv(string& packet);   // IP 헤더 벗기고 protocol로 상위 계층에 demux
 }
 #endif // __IP_H__
