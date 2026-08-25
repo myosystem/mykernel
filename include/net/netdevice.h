@@ -14,13 +14,19 @@ class NetDevice {
 protected:
 	uint32_t src_ip_;
 public:
-	NetDevice(uint32_t ip)
-		: src_ip_(ip) {}
+	NetDevice()
+		: src_ip_(0) {}
 	~NetDevice() {}
 	virtual void init() = 0;
 	virtual void send(string& packet, uint32_t next_hop, uint16_t ethertype) = 0;   // next_hop=ARP대상, ethertype=상위L3(0x0800 IPv4 등)
 	virtual uint64_t max_packet_size() = 0;
 	uint32_t src_ip() { return src_ip_; }
+	void set_ip(uint32_t src_ip) {
+		src_ip_ = src_ip;
+	}
+	virtual void get_mac(char* mac_buf) {
+		memset(mac_buf, 0, 6);
+	}
 };
 struct Route {
 	uint32_t dest;      // 목적지 네트워크 (예: 127.0.0.0)
@@ -32,6 +38,7 @@ struct Route {
 namespace RouteTable {
 	void init();
 	void add(uint32_t dest, uint32_t netmask, uint32_t gateway, NetDevice* dev);
+	void del(NetDevice* dev);
 	bool find(uint32_t ip, Route* route_out);
 }
 class LoopBack : public NetDevice {
@@ -39,7 +46,7 @@ protected:
 	struct QPacket { Page data; uint64_t len; };
 public:
 	LoopBack()
-		: NetDevice(ipaddr(127,0,0,1)) {}
+		: NetDevice() {}
 	void init() override {}
 	void send(string& packet, uint32_t next_hop, uint16_t ethertype) override;
 	uint64_t max_packet_size() override { return 4096; }

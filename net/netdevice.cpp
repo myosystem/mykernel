@@ -9,12 +9,18 @@ namespace RouteTable {
 	void init() {
 		routes = new (routes_buf) vector<Route>();
 		NetDevice* loopback_dev = new (loopback_buf) LoopBack();
+		loopback_dev->set_ip(ipaddr(127, 0, 0, 1));
 		RouteTable::add(ipaddr(127, 0, 0, 0), ipaddr(255, 0, 0, 0), 0, loopback_dev);
 	}
 	void add(uint32_t dest, uint32_t netmask, uint32_t gateway, NetDevice* dev) {
 		routes->push_back({ dest, netmask, gateway, dev });
 		if (gateway != 0) {
 			routes->push_back({ ipaddr(0,0,0,0),ipaddr(0,0,0,0),gateway,dev });
+		}
+	}
+	void del(NetDevice* dev) {
+		for (size_t i = routes[0].size(); i-- > 0; ) {
+			if (routes[0][i].dev == dev) routes[0].erase(i);
 		}
 	}
 	bool find(uint32_t ip, Route* route_out) {
