@@ -224,10 +224,10 @@ void init_process() {
     idle_process->cr3 = virt_page_allocator->getCr3() + HHDM_BASE;
     idle_process->state = 1;
     idle_process->code_va_base = (uint64_t)idle_process_func;
-    idle_process->kernel_stack_phys = phy_page_allocator->alloc_phy_page();
+    idle_process->kernel_stack_phys = phy_page_allocator->alloc_phy_page() + PageSize;
     idle_process->kernel_stack = (uint64_t*)(idle_process->kernel_stack_phys + HHDM_BASE);
-    idle_process->user_stack_bottom = (uint64_t)idle_process->kernel_stack + PageSize;
-    idle_process->user_stack_top = (uint64_t)idle_process->kernel_stack;
+    idle_process->user_stack_bottom = (uint64_t)idle_process->kernel_stack;
+    idle_process->user_stack_top = (uint64_t)idle_process->kernel_stack - PageSize;
     idle_process->pallocator = virt_page_allocator; // 재사용
     idle_process->time_slice = 10;
     idle_process->id = IDLE_PROCESS_PID; // idle 프로세스는 고유한 ID가 없음
@@ -252,6 +252,17 @@ void add_process(size_t index) {
 	if (index == IDLE_PROCESS_PID) {
         return; // idle은 큐에 넣지 않음
     }
+    Process* p = (Process*)Process::get(index);
+    if (p) p->state &= ~PROCESS_STATE_WAITING;
+    process_queue->enqueue(index);
+}
+void add_process(size_t index, uint64_t result) {
+    if (index == IDLE_PROCESS_PID) {
+        return; // idle은 큐에 넣지 않음
+    }
+    Process* p = (Process*)Process::get(index);
+    if (p) p->state &= ~PROCESS_STATE_WAITING;
+    ((context_t*)p->kernel_stack)->rax = result;
     process_queue->enqueue(index);
 }
 Process* GetProcess(size_t index) {
@@ -393,6 +404,7 @@ bool Process::munmap(uint64_t va, uint64_t size) {
         _unlockmmap();
         return false; // 해당 영역이 mmap된 영역과 일치하지 않음
     }
+    //pallocator->free_virt_pages(va, page_count * PageSize);
     if (entry->va_start == va && entry->va_end == va + page_count * PageSize - 1) {
         // 완전히 일치하는 경우, 엔트리를 제거
         if (last) {
@@ -425,29 +437,38 @@ bool Process::munmap(uint64_t va, uint64_t size) {
 	return true;
 }
 void Process::msg_recv(msg_t msg,bool blocking) {
-    if (state & PROCESS_STATE_MSGWAIT) {
-        state &= ~PROCESS_STATE_MSGWAIT; // 메시지 대기 상태 해제
-        state &= ~PROCESS_STATE_WAITING; // 대기 상태 해제
-        add_process(id); // 프로세스 스케줄링 큐에 추가
+    lock_msg();
+    if (id == -1) {
+        return;
     }
     if (msg.type == MSG_MOUSE_MOVE) {
         msg_t* last = msgq.peek_back();
         if (last && last->type == MSG_MOUSE_MOVE) {
             last->payload.params.arg[0] = msg.payload.params.arg[0];
             last->payload.params.arg[1] = msg.payload.params.arg[1];
+            unlock_msg();
             return;  // enqueue 없이 그냥 업데이트만
         }
     }
     if (msgq.get_size() > ((msg.sender_pid == ((uint64_t)-1)) ? MAX_MESSAGE_QUEUE_INT : MAX_MESSAGE_QUEUE_SIZE)) {
         if (blocking) {
 			waiting_msgq.enqueue(msg.sender_pid); // 메시지 보낸 프로세스 PID 대기 큐에 추가
+			unlock_msg();
             simple_wait();
+            lock_msg();
         }
         else {
+			unlock_msg();
 			return; // 큐가 가득 찼으면 메시지 버리기
         }
     }
     msgq.enqueue(msg);
+    if (state & PROCESS_STATE_MSGWAIT) {
+        state &= ~PROCESS_STATE_MSGWAIT; // 메시지 대기 상태 해제
+        state &= ~PROCESS_STATE_WAITING; // 대기 상태 해제
+        add_process(id); // 프로세스 스케줄링 큐에 추가
+    }
+    unlock_msg();
 }
 bool Process::msg_pop(msg_t* msg) {
     while (!waiting_msgq.isEmpty()) {
@@ -572,7 +593,7 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
 
     state = 1;
     uint64_t readbuffer = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
-    while (file->read((void*)readbuffer, PageSize) != 0) {
+    while (file->read((void*)readbuffer, PageSize) > 0) {
         addCode((void*)readbuffer);
     }
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);

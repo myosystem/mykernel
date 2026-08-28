@@ -1,5 +1,6 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
+#include "util/size.h"
 extern int __rand_seed;
 
 static inline int simple_rand() {
@@ -40,5 +41,6 @@ inline void* operator new[](unsigned long long, void* p) noexcept { return p; }
 inline void* operator new(unsigned long, void* p) noexcept { return p; }
 inline void* operator new[](unsigned long, void* p) noexcept { return p; }
 #endif
-
+uint16_t swap16(uint16_t v);
+uint32_t swap32(uint32_t v);
 #endif // __UTIL_H__
