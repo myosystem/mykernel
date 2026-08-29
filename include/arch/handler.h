@@ -21,5 +21,6 @@ __attribute__((interrupt))  void stack_segment_fault_handler(interrupt_frame_t* 
 __attribute__((naked))      void syscall_idthandler();
 __attribute__((naked))      void waiting_idthandler();
 __attribute__((interrupt))  void xhci_handler(interrupt_frame_t* frame);
+__attribute__((interrupt))  void e1000_handler(interrupt_frame_t* frame);
 extern "C" void waiting_handler(context_t* frame);
 #endif // __HANDLER_H__
