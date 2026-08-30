@@ -356,11 +356,14 @@ extern "C" void waiting_handler(context_t* frame) {
     switch (frame->rax) {
     case 0x4:   //MSG waiting
     {
+		now_process->lock_msg();
 		if (!now_process->msg_empty()) {
+			now_process->unlock_msg();
 			frame->rax = -1; // 메시지 큐에 이미 메시지가 있는 경우 에러 반환
             return;
         }
 		now_process->state |= PROCESS_STATE_MSGWAIT; // 메시지 대기 상태
+		now_process->unlock_msg();
         break;
     }
     case 0x5:   //MSG blocking wait
