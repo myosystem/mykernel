@@ -64,3 +64,8 @@ void ICMPSocket::sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route*
 	data.write_at(2, (const uint8_t*)&header.checksum, sizeof(header.checksum));
 	IPv4::send(route, dst_ip, IPPROTO_ICMP, data, ttl);
 }
+void ICMPSocket::close() {
+	icmp_socket[icmp_id_] = nullptr;
+	while (!wait_queue.isEmpty()) add_process(wait_queue.dequeue());
+	delete this;
+}

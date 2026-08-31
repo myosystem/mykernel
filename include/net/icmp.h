@@ -34,5 +34,6 @@ public:
     ~ICMPSocket() override;
     static ICMPSocket* Create();
     static void deliver(uint32_t src, uint32_t dst, string& msg);   // ICMP 헤더 벗기고 echo응답/소켓demux
+    void close();
 };
 #endif // __ICMP_H__
