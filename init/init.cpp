@@ -15,27 +15,8 @@
 #include "driver/nvme.h"
 #include "driver/xhci_c.h"
 #include "driver/e1000.h"
-
-//pml4
-//256 partition data heap       0xFFFF800000000000
-//257 mmap table heap           0xFFFF808000000000
-//258 process message queue     0xFFFF810000000000
-//259 process queue             0xFFFF818000000000
-//260 shared memory queue       0xFFFF820000000000
-//261 disk queue                0xFFFF828000000000
-//262 Partitioner queue         0xFFFF830000000000
-//263 File queue                0xFFFF838000000000
-//264 event heap tree array     0xFFFF840000000000
-//265 controller queue          0xFFFF848000000000
-//266 xhci queue                0xFFFF850000000000
-//267 protocol queue	        0xFFFF858000000000
-//268 HID queue                 0xFFFF860000000000
-//269 AML node pool             0xFFFF868000000000
-//270 AML object pool           0xFFFF870000000000
-//509 mmio
-//510 HHDM
-//511 kernel + bootdata + init stack
-
+#include "net/netdevice.h"
+#include "net/ip.h"
 
 // 최종 APIC 초기화
 void init_apic() {
@@ -47,7 +28,7 @@ void init_apic() {
     setup_lapic_timer_tsc_deadline(32);
     ioapic_set_redirection(1, 0x21, 0);
     ioapic_set_redirection(12, 0x2C, 0);
-//    enable_cursor();  // PS/2 mouse absent on VMware -> would hang; mouse is xHCI
+    enable_cursor();  // PS/2 mouse absent on VMware -> would hang; mouse is xHCI
 	enable_keyboard();
 }
 
@@ -66,22 +47,30 @@ void init_interrupts() {
     set_idt_gate(33, (uint64_t)keyboard_handler, 0x08, 0x8E);
     set_idt_gate(0x2C, (uint64_t)mouse_handler, 0x08, 0x8E);
     set_idt_gate(0x35, (uint64_t)xhci_handler, 0x08, 0x8E);
+    set_idt_gate(0x36, (uint64_t)e1000_handler, 0x08, 0x8E);
 	set_idt_gate(0x80, (uint64_t)syscall_idthandler, 0x08, 0xEE);
 	set_idt_gate(0x81, (uint64_t)waiting_idthandler, 0x08, 0xEE);
     load_idt();
 }
 vector<Controller*>* controllers;
-vector<Controller*>* netdevices;
 alignas(vector<Controller*>) uint8_t controller_buf[sizeof(vector<Controller*>)];
+vector<NetDevice*>* netdevices;
+alignas(vector<NetDevice*>) uint8_t netdevices_buf[sizeof(vector<NetDevice*>)];
 vector<Disk*>* disks;
 alignas(vector<Disk*>) uint8_t disk_buf[sizeof(vector<Disk*>)];
 bool booting = true;
 //일단 콘솔부터
 bool g_pmc_ok = false;
 void setup_cpu() {
+    uint64_t cr0;
+    __asm__ __volatile__("mov %0, cr0" : "=r"(cr0));
+    cr0 |= 0b10;
+    cr0 = cr0 & (~0b1100);
+    __asm__ __volatile__("mov cr0, %0" :: "r"(cr0));
     uint64_t cr4;
     __asm__ __volatile__("mov %0, cr4" : "=r"(cr4));
     cr4 |= (1u << 7);   // CR4.PGE: enable global pages
+    cr4 |= (0b11 << 9);
     __asm__ __volatile__("mov cr4, %0" :: "r"(cr4));
     // PMU FIXED_CTR1 = unhalted core cycles (guest exec cycles; frozen during host preempt)
     uint32_t pa, pb, pc, pd;
@@ -103,6 +92,10 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     setup_cpu();
     init_tss(0, 0);
     init_interrupts();
+    for (uint64_t i = PML4::PML4_POOL_GUARD_LOW + 1; i < PML4::PML4_POOL_GUARD_HIGH; i++) {
+        volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
+        *pml4_entry_addr = 0;
+    }
     acpi_dump_rsdp();
     acpi_dump_xsdt();
     acpi_dump_fadt();
@@ -110,10 +103,12 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     acpi_aml_probe();
     acpi_build_namespace();
     acpi_dump_namespace();
+    RouteTable::init();
     File* trampoline = kernel_open_file("#0/EFI/BOOT/signal.o");
     init_process();
     
 	controllers = new (controller_buf) vector<Controller*>();
+    netdevices = new (netdevices_buf) vector<NetDevice*>();
 	disks = new (disk_buf) vector<Disk*>();
     for (uint16_t bus = 0; bus < 256; bus++) {
         for (uint16_t slot = 0; slot < 32; slot++) {
@@ -152,10 +147,14 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
                     }
                 }
 				else if (class_code == 0x02 && subclass == 0x00) {
+                    uint16_t vendor = pci_read16(bus, slot, func, 0x00);
+                    uint16_t device = pci_read16(bus, slot, func, 0x02);
+                    uart_print("e1000 device id: "); uart_print_hex(device); uart_print("\n");
 					// 네트워크 컨트롤러
-					E1000* netdev = new E1000(bus, slot, func);
+                    E1000* netdev = new E1000(bus, slot, func);
                     netdev->init();
-					netdevices->push_back(netdev);
+                    netdevices->push_back(netdev);
+                    //RouteTable::add(ipaddr(0,0,0,0), ipaddr(255, 255, 255, 0), ipaddr(0,0,0,0), netdev);
 				}
             }
         }
