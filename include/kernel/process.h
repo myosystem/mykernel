@@ -10,7 +10,6 @@
 #include "util/new.h"
 #include "arch/idt.h"
 #define MMAP_ENTRY_BASE 0xFFFF808000000000ULL
-#define MESSAGE_QUEUE_BASE 0xFFFF810000000000ULL
 #define PROCESS_QUEUE_BASE 0xFFFF818000000000ULL
 
 #define PROCESS_STATE_READY     0b1
@@ -18,6 +17,7 @@
 #define PROCESS_STATE_MSGWAIT   0b100
 #define PROCESS_STATE_ZOMBIE    0b1000
 #define PROCESS_STATE_CHILD_WAIT 0b10000
+#define PROCESS_STATE_SOCKET_WAIT 0b100000
 struct TSS64 {
     uint32_t reserved0;
     uint64_t rsp0;
@@ -121,12 +121,30 @@ enum {
     MSG_MAKE_WINDOW = MSG_GUI_BASE + 1,
     MSG_DESTROY_WINDOW = MSG_GUI_BASE + 2,
     MSG_DRAW_FRAME = MSG_GUI_BASE + 3,
+	MSG_WINDOW_RESIZE = MSG_GUI_BASE + 4,
+	MSG_WINDOW_MOVE = MSG_GUI_BASE + 5,
+	MSG_WINDOW_FOCUS = MSG_GUI_BASE + 6,
+	MSG_REZORDER = MSG_GUI_BASE + 7,
+
     MSG_MOUSE_MOVE = MSG_GUI_BASE + 0x100,
     MSG_MOUSE_LCLICK = MSG_GUI_BASE + 0x101,
     MSG_MOUSE_RCLICK = MSG_GUI_BASE + 0x102,
     MSG_MOUSE_SCROLL = MSG_GUI_BASE + 0x103,
 	MSG_MOUSE_LRELEASE = MSG_MOUSE_LCLICK + 0x10,
 	MSG_MOUSE_RRELEASE = MSG_MOUSE_RCLICK + 0x10,
+
+	MSG_CONSOLE_BASE = 0x4000,
+	MSG_CONSOLE_CLEAR = MSG_CONSOLE_BASE + 1,
+	MSG_CONSOLE_MODE_SET = MSG_CONSOLE_BASE + 2,
+	MSG_CONSOLE_MODE_GET = MSG_CONSOLE_BASE + 3,
+	MSG_CONSOLE_SIZE_SET = MSG_CONSOLE_BASE + 4,
+	MSG_CONSOLE_SIZE_GET = MSG_CONSOLE_BASE + 5,
+	MSG_CONSOLE_CURSOR_SET = MSG_CONSOLE_BASE + 6,
+	MSG_CONSOLE_CURSOR_GET = MSG_CONSOLE_BASE + 7,
+
+	// Socket
+	MSG_SOCKET_BASE = 0x5000,
+	MSG_SOCKET_DATA = MSG_SOCKET_BASE + 1,
 };
 typedef struct {
     uint64_t sender_pid;    // 8 bytes (Explicitly aligned)
@@ -159,6 +177,7 @@ void pdestroy(void* obj);
 class Process : public NewObject<PROCESS_QUEUE_BASE, 512, pinit, pdestroy> {
 private:
     queue<msg_t> msgq;
+    volatile bool msg_lock = false;
 	queue<uint64_t> waiting_msgq; // 메시지 대기 중인 프로세스들의 PID 저장
 	vector<uint64_t> children; // 자식 프로세스들의 PID 저장
     context_t signal_save;
@@ -190,6 +209,8 @@ public:
     void msg_recv(msg_t msg, bool blocking);
     bool msg_pop(msg_t* msg);
 	bool msg_empty() const;
+	void lock_msg()   { while (__atomic_test_and_set(&msg_lock, __ATOMIC_ACQUIRE)) __asm__ __volatile__("pause"); }
+	void unlock_msg() { __atomic_clear(&msg_lock, __ATOMIC_RELEASE); }
     void run_process();
     uint64_t fork(context_t* ctx);
 	uint64_t exec(const char* path, const char* argv[], context_t* ctx);
@@ -207,6 +228,7 @@ void init_process();
 void init_trampoline(File* trampoline);
 Process* GetProcess(size_t index);
 void add_process(size_t process_id);
+void add_process(size_t index, uint64_t result);
 Process* next_process();
 uint64_t get_process_count();
 uint64_t get_max_process_id();
