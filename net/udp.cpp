@@ -76,3 +76,8 @@ void UDPSocket::sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* 
 	data.write_at(6, (const uint8_t*)&ck, sizeof(ck));
 	IPv4::send(route, dst_ip, IPPROTO_UDP, data, ttl);
 }
+void UDPSocket::close() {
+	ports[udp_port_] = nullptr;
+	while (!wait_queue.isEmpty()) add_process(wait_queue.dequeue());
+	delete this;
+}

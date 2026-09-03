@@ -18,7 +18,8 @@ protected:
 public:
     ~UDPSocket() override;
     static UDPSocket* Create(uint64_t port = -1);
-    static void deliver(uint32_t src, uint32_t dst, string& msg);   // ICMP 헤더 벗기고 echo응답/소켓demux
+    static void deliver(uint32_t src, uint32_t dst, string& msg);
+    void close() override;
 };
 
 #endif // __UDP_H__
