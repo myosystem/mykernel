@@ -49,5 +49,6 @@ public:
 	virtual void sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* route = nullptr) = 0;
 	virtual uint64_t recv(RxMsg& data, size_t& max_len);
 	uint64_t msg_pid;
+	virtual void close() = 0;
 };
 #endif // __SOCKET_H__
