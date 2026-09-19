@@ -146,16 +146,17 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
                         // EHCI 발견
                     }
                 }
-				else if (class_code == 0x02 && subclass == 0x00) {
+                else if (class_code == 0x02 && subclass == 0x00) {
                     uint16_t vendor = pci_read16(bus, slot, func, 0x00);
                     uint16_t device = pci_read16(bus, slot, func, 0x02);
-                    uart_print("e1000 device id: "); uart_print_hex(device); uart_print("\n");
-					// 네트워크 컨트롤러
-                    E1000* netdev = new E1000(bus, slot, func);
-                    netdev->init();
-                    netdevices->push_back(netdev);
-                    //RouteTable::add(ipaddr(0,0,0,0), ipaddr(255, 255, 255, 0), ipaddr(0,0,0,0), netdev);
-				}
+                    uart_print("NIC vendor="); uart_print_hex(vendor);
+                    uart_print(" device="); uart_print_hex(device); uart_print("\n");
+                    if (vendor == 0x8086) {
+                        E1000* netdev = new E1000(bus, slot, func);
+                        netdev->init();
+                        netdevices->push_back(netdev);
+                    }
+                }
             }
         }
     }
