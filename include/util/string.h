@@ -170,6 +170,16 @@ public:
         string s; s.append_from(*this, off, n); return s;
     }
 
+    void pad(size_t size) {
+        len_ += size;
+        tail += size;
+        while (tail > PGSZ) {
+            void* np = alloc_page();
+            *((void**)back_page) = np;
+            back_page = np; tail -= PGSZ - LINK;
+        }
+    }
+
     // 인터넷 체크섬(RFC1071) — off부터 n바이트. 16비트 짝은 논리 위치(pos)로 맞춤(ip_checksum과 동일 순서).
     uint16_t checksum16(uint64_t off, uint64_t n) const {
         uint32_t sum = 0; uint64_t pos = 0;
