@@ -252,7 +252,7 @@ private:
 	Page* back_page;
 	size_t back_index;  // back_page에서 다음 빈 슬롯 인덱스
     size_t size;        // 전체 요소 수
-	void* nullresult = nullptr; // nullptr 반환용
+    inline static void* nullresult = nullptr; // nullptr 반환용
 public:
     pointer_vector() {
         front_page = (Page*)(phy_page_allocator->alloc_phy_page() + HHDM_BASE);
