@@ -669,7 +669,7 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
 		uint64_t argv_user = stack_page_va + cursor;
 		cursor -= 8;
 		*(uint64_t*)(page_buf + cursor) = (uint64_t)safe_argc;
-		ctx->rsp = stack_page_va + cursor;
+        ctx->rsp = (stack_page_va + cursor) & ~0xFULL;   // 16 내림 정렬
 		ctx->rdi = (uint64_t)safe_argc;
 		ctx->rsi = argv_user;
 		phy_page_allocator->put_page(tmp_pa);
