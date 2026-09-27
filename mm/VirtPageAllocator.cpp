@@ -296,7 +296,9 @@ void VirtPageAllocator::free_virt_pages(uint64_t va, uint64_t size) {
     if (va & 0xFFF || size & 0xFFF) return; // 정렬 불량
     uint64_t pages = (size + 4095) / 4096;
     for (uint64_t i = 0; i < pages; i++) {
-        phy_allocator->put_page(free_virt_page(va + i * 4096));
+        uint64_t pa = free_virt_page(va + i * 4096);
+        if (pa == ~0ULL) continue;
+        phy_allocator->put_page(pa);
     }
 }
 
