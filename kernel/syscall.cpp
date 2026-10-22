@@ -12,6 +12,7 @@
 #include "filesys/file.h"
 #include "net/socket.h"
 #include "net/icmp.h"
+#include "net/tcp.h"
 #include "net/udp.h"
 extern uint64_t get_cycles();
 extern vector<NetDevice*>* netdevices;
@@ -329,11 +330,6 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 		uint64_t size = frame->rsi;
 		if (now_process->munmap(addr, size)) {
 			frame->rax = 0; // 반환값: 성공
-			uart_print("munmap addr: ");
-			uart_print_hex(addr);
-			uart_print(", size: 0x");
-			uart_print_hex(size);
-			uart_print("\n");
 		}
 		else {
 			frame->rax = -1; // 반환값: 오류
@@ -446,6 +442,9 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 			Socket* socket = nullptr;
 			if (frame->rsi == 1) {
 				socket = ICMPSocket::Create();
+			}
+			else if (frame->rsi == 2) {
+				socket = TCPSocket::Create(frame->rdx);
 			}
 			else if (frame->rsi == 3) {
 				socket = UDPSocket::Create(frame->rdx);
