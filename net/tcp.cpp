@@ -91,6 +91,17 @@ void TCPSocket::sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* 
 		IPv4::send(&this->route, dst_ip_, IPPROTO_TCP, seg, ttl);
 	}
 }
+void TCPSocket::resend() {
+	if (tcp_state != TCP_ESTABLISHED) return;
+	string data;
+	uint16_t mss = this->route.dev->max_packet_size()
+		- sizeof(ipv4_header) - sizeof(tcp_header);
+	constexpr auto min = [](uint16_t a, uint16_t b) { return a < b ? a : b; };
+	if (sendbuf.read_ack(data, min(mss, sendbuf.seq_send() - sendbuf.seq_ack())) == 0) return;
+	make_tcp_header(sendbuf.seq_ack(), TCP_PSH | TCP_ACK, data, 0,
+		tcp_port_, dst_ip_, dst_port_);
+	IPv4::send(&this->route, dst_ip_, IPPROTO_TCP, data, ttl);
+}
 uint64_t TCPSocket::recv(RxMsg& data, size_t& maxlen) {
 	if (state & SOCKET_FLAG_BLOCKING) {
 		while (!recvbuf.readable()) {
