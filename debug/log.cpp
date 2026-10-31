@@ -2,9 +2,65 @@
 #include "arch/io.h"
 #include "kernel/kernel.h"
 #include "kernel/console.h"
+//#define LOG_TO_FRAMEBUFFER
+//#define LOG_SCROLL
 #define COM1 0x3F8
-static uint8_t console[200 * 80] = { 0, }; // 디버깅용 콘솔 버퍼
-uint64_t cursor_pos = 0;
+#define LOG_CELL_W 8
+#define LOG_CELL_H 20
+#define LOG_MARGIN 4
+#define LOG_MAX_COLS 256
+#define LOG_MAX_ROWS 128
+#define LOG_SCROLL_LINES 8
+#define LOG_BG 0xFFFFFF
+
+static char log_buf[LOG_MAX_ROWS][LOG_MAX_COLS];
+static uint32_t log_cols = 0;
+static uint32_t log_rows = 0;
+static uint32_t cur_col = 0;
+static uint32_t cur_row = 0;
+
+static void log_fill_bg() {
+    volatile uint32_t* fb = (volatile uint32_t*)bootinfo->framebufferAddr;
+    uint64_t n = (uint64_t)bootinfo->framebufferPitch * bootinfo->framebufferHeight;
+    for (uint64_t i = 0; i < n; i++) fb[i] = LOG_BG;
+}
+
+static void log_redraw() {
+    log_fill_bg();
+    for (uint32_t r = 0; r < log_rows; r++) {
+        for (uint32_t c = 0; c < log_cols; c++) {
+            char ch = log_buf[r][c];
+            if (ch == ' ' || ch == 0) continue;
+            putc(bootinfo, LOG_MARGIN + c * LOG_CELL_W, LOG_MARGIN + r * LOG_CELL_H, ch, 0, 1);
+        }
+    }
+}
+
+static void log_scroll() {
+    uint32_t n = LOG_SCROLL_LINES;
+    if (n > log_rows) n = log_rows;
+    for (uint32_t r = 0; r + n < log_rows; r++) {
+        for (uint32_t c = 0; c < log_cols; c++) log_buf[r][c] = log_buf[r + n][c];
+    }
+    for (uint32_t r = log_rows - n; r < log_rows; r++) {
+        for (uint32_t c = 0; c < log_cols; c++) log_buf[r][c] = ' ';
+    }
+    log_redraw();
+    cur_row = log_rows - n;
+}
+
+static void log_newline() {
+    cur_col = 0;
+    cur_row++;
+    if (cur_row >= log_rows) {
+#ifdef LOG_SCROLL
+        log_scroll();
+#else
+        cur_row = log_rows - 1;
+#endif
+    }
+}
+
 void uart_init() {
     outb(COM1 + 1, 0x00);    // Disable interrupts
     outb(COM1 + 3, 0x80);    // Enable DLAB
@@ -13,10 +69,19 @@ void uart_init() {
     outb(COM1 + 3, 0x03);    // 8 bits, no parity, one stop
     outb(COM1 + 2, 0xC7);    // Enable FIFO
     outb(COM1 + 4, 0x0B);    // IRQs enabled, RTS/DSR set
-    for (unsigned int i = 0; i < bootinfo->framebufferPitch * bootinfo->framebufferHeight; i++) {
-        uint32_t PixelColor = 0xFFFFFF;
-        *((uint32_t*)(bootinfo->framebufferAddr) + i) = PixelColor;
+
+    log_cols = (bootinfo->framebufferWidth - LOG_MARGIN * 2) / LOG_CELL_W;
+    log_rows = (bootinfo->framebufferHeight - LOG_MARGIN * 2) / LOG_CELL_H;
+    if (log_cols > LOG_MAX_COLS) log_cols = LOG_MAX_COLS;
+    if (log_rows > LOG_MAX_ROWS) log_rows = LOG_MAX_ROWS;
+    if (log_cols == 0) log_cols = 1;
+    if (log_rows == 0) log_rows = 1;
+    for (uint32_t r = 0; r < log_rows; r++) {
+        for (uint32_t c = 0; c < log_cols; c++) log_buf[r][c] = ' ';
     }
+    cur_col = 0;
+    cur_row = 0;
+    log_fill_bg();
 }
 
 int uart_is_transmit_empty() {
@@ -27,30 +92,14 @@ void uart_putc(char c) {
     while (!uart_is_transmit_empty());
     outb(COM1, c);
 #ifdef LOG_TO_FRAMEBUFFER
-    if (c == '\r') {
-        cursor_pos -= (cursor_pos % 200); // 커서를 현재 줄의 시작으로 이동
-    }
-    else if (c == '\n') {
-        cursor_pos += (200 - (cursor_pos % 200)); // 커서를 다음 줄의 시작으로 이동
-    }
-    putc(bootinfo, (cursor_pos % 200) * 1 * 8 + 4, (cursor_pos / 200) * 2 * 10 + 4, c, 0, 1);
-    cursor_pos++;
-	if ((cursor_pos / 200) * 20 + 14 > bootinfo->framebufferHeight) {
-#ifdef LOG_SCROLL
-		for (uint64_t y = 0; y < bootinfo->framebufferHeight - 20; y++) {
-			for (uint64_t x = 0; x < bootinfo->framebufferPitch; x++) {
-				((uint32_t*)(bootinfo->framebufferAddr))[y * bootinfo->framebufferPitch + x] =
-					((uint32_t*)(bootinfo->framebufferAddr))[(y + 20) * bootinfo->framebufferPitch + x];
-			}
-		}
-		for (uint64_t y = bootinfo->framebufferHeight - 20; y < bootinfo->framebufferHeight; y++) {
-			for (uint64_t x = 0; x < bootinfo->framebufferPitch; x++) {
-				((uint32_t*)(bootinfo->framebufferAddr))[y * bootinfo->framebufferPitch + x] = 0xFFFFFF;
-			}
-		}
-#endif
-		cursor_pos = (bootinfo->framebufferHeight / 20 - 2) * 200; // 커서를 마지막 줄의 시작으로 이동
-    }
+    if (log_cols == 0) return;
+    if (c == '\r') { cur_col = 0; return; }
+    if (c == '\n') { log_newline(); return; }
+    if (c < 32 || c > 126) return;
+    if (cur_col >= log_cols) log_newline();
+    log_buf[cur_row][cur_col] = c;
+    putc(bootinfo, LOG_MARGIN + cur_col * LOG_CELL_W, LOG_MARGIN + cur_row * LOG_CELL_H, c, 0, 1);
+    cur_col++;
 #endif
 }
 

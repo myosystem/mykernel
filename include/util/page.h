@@ -16,6 +16,7 @@ public:
     ~Page() { release(); }                                                        // rc--, 0되면 해제
 
     uint8_t* data() { return (uint8_t*)page; }        // 원시 접근
+    uint64_t phy() { return (uint64_t)page - HHDM_BASE; }
     static void* operator new(size_t) = delete;
     static void* operator new[](size_t) = delete;
     static void  operator delete(void*) = delete;

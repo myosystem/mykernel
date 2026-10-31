@@ -1,6 +1,6 @@
 #include "net/socket.h"
 
-uint64_t Socket::recv(RxMsg& data) {
+uint64_t Socket::recv(RxMsg& data, size_t& max_len) {
 	if (state & SOCKET_FLAG_BLOCKING) {
 		while (recv_queue.isEmpty()) {
 			wait_queue.enqueue(now_process->id);
@@ -16,7 +16,7 @@ uint64_t Socket::recv(RxMsg& data) {
 	}
 	RxMsg m = recv_queue.dequeue();
 	data = (RxMsg&&)m;
-	return 0;
+	return recv_queue.get_size();
 }
 extern vector<NetDevice*>* netdevices;
 bool Socket::set_device(uint64_t device_id) {

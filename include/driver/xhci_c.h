@@ -26,7 +26,7 @@ struct ERSTEntry {
 } __attribute__((packed));
 class XHCIRing {
 private:
-    TRB* ring;
+    volatile TRB* ring;
     uint64_t phys_start;
     uint32_t size;         // TRB 개수 (예: 256)
     uint32_t enqueue_idx;  // 다음에 쓸 인덱스
@@ -38,13 +38,13 @@ public:
         phys_start = phy_page_allocator->alloc_phy_pages((size * sizeof(TRB) + 4095) / 4096);
         ring = (TRB*)(phys_start + MMIO_BASE);
 		virt_page_allocator->alloc_virt_pages_range((uint64_t)ring, phys_start, (size * sizeof(TRB) + 4095) & ~0xFFF, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::PCD);
-        memset(ring, 0, size * sizeof(TRB));
+        memset((void*)ring, 0, size * sizeof(TRB));
 
         enqueue_idx = 0;
         cycle_bit = 1;
 
         // 링의 가장 마지막 칸을 Link TRB로 설정 (워프 게이트)
-        TRB* link = &ring[size - 1];
+        volatile TRB* link = &ring[size - 1];
         link->parameter1 = (uint32_t)(phys_start & 0xFFFFFFFF);
         link->parameter2 = (uint32_t)(phys_start >> 32);
 
@@ -60,8 +60,11 @@ public:
         uint64_t target_phys = (uint64_t)(ring + enqueue_idx) - MMIO_BASE;
         // 1. 현재 주기에 맞는 Cycle 비트 강제 주입
         trb.control = (trb.control & ~1) | cycle_bit;
-        ring[enqueue_idx] = trb;
+        ring[enqueue_idx].parameter1 = trb.parameter1;
+        ring[enqueue_idx].parameter2 = trb.parameter2;
+        ring[enqueue_idx].status = trb.status;
         __asm__ __volatile__("sfence" ::: "memory");
+        ring[enqueue_idx].control = trb.control;
         enqueue_idx++;
 
         // 2. Link TRB(마지막 칸)에 도달했는지 확인
@@ -90,7 +93,7 @@ struct PendingCommand {
 };
 class EventRing {
 private:
-    EventTRB* ring;      // 가상 주소
+    volatile EventTRB* ring;      // 가상 주소
     uint64_t phys_start; // 물리 주소
     uint32_t size;       // TRB 개수 (예: 256)
     uint32_t dequeue_idx; // 내가 읽을 위치
@@ -111,7 +114,10 @@ public:
     }
 
     EventTRB pop() {
-        EventTRB event = ring[dequeue_idx];
+        EventTRB event;
+        event.ptr = ring[dequeue_idx].ptr;
+        event.status = ring[dequeue_idx].status;
+        event.control = ring[dequeue_idx].control;
 
         dequeue_idx++;
         if (dequeue_idx == size) {

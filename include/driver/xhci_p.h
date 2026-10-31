@@ -38,7 +38,7 @@ private:
     uint8_t dci_out;
     CommandBlockWrapper* cbw;
     CommandStatusWrapper* csw;
-
+    volatile uint32_t busy = false;
 public:
     XHCI_BOT_Protocol(XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>* dev,
         uint8_t slot, uint8_t in_dci, uint8_t out_dci)

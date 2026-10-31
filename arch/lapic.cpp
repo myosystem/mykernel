@@ -180,6 +180,9 @@ void tsc_init(void) {
     g_tsc_hz = tsc_get_freq_cpuid();
     if (g_tsc_hz == 0)
         g_tsc_hz = calibrate_with_pit(); // fallback
+    uart_print("TSC frequency: ");
+    uart_print_hex(g_tsc_hz);
+    uart_print("\n");
 }
 
 // 취소

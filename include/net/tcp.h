@@ -3,6 +3,7 @@
 #include "util/size.h"
 #include "util/string.h"
 #include "net/socket.h"
+#define EVENT_TYPE_TCP_RTO 3
 struct tcp_header {
     uint16_t src_port;
     uint16_t dst_port;
@@ -97,6 +98,7 @@ public:
         return holes[0].offset - offset;
     }
 };
+void tcp_callback(void* event_info, uint64_t status, uint64_t control, void* ctx);
 class TCPSendBuffer {
 private:
     string buf;
@@ -163,6 +165,7 @@ public:
     static TCPSocket* Create(uint64_t port);
     bool connect(uint32_t dst_ip, uint16_t dst_port) override;
     void sendto(uint32_t dst_ip, uint16_t dst_port, string& data, Route* route = nullptr);
+    void resend();
     uint64_t recv(RxMsg& data, size_t& maxlen) override;
     static void deliver(uint32_t src, uint32_t dst, string& msg);
     void close();

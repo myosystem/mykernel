@@ -67,7 +67,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         setup.parameter1 = 0x01000680; // bmRequestType(80), bRequest(06:GetDesc), wValue(0100:Device)
         setup.parameter2 = 0x00120000; // wIndex(0), wLength(18)
         setup.status = 8;              // TRB Transfer Length (항상 8)
-        setup.control = (2 << 10) | (1 << 6); // IDT(6), Type(Setup:2)
+		setup.control = (2 << 10) | (1 << 6) | (3 << 16); // IDT(6), Type(Setup:2), TRB Transfer Type(3)
 
         // 2. Data Stage TRB (데이터를 받을 버퍼)
         uint64_t desc_phys = phy_page_allocator->alloc_phy_page(); // 18바이트 담을 공간
@@ -109,18 +109,16 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
 		setup.parameter1 = 0x02000680; // wValue(0200:Config)
         setup.parameter2 = 0x00090000; //0x00090000
 		setup.status = 8;              // TRB Transfer Length (항상 8)
-		setup.control = 0x00000840; // IDT(1), Type(Setup:2), Cycle(1)
+		setup.control = (2 << 10) | (1 << 6) | (3 << 16); // IDT(1), Type(Setup:2), TRB Transfer Type(3)
 
 		data.status = 0x09;              // 받을 크기 (9바이트)
 		data.control = 0x00010C00; // Type(Data:3), DIR(In:1), Cycle(1)
 
-        status.control = 0x00001060 | (1 << 5); // Type(Status:4), Cycle(1)
+        status.control = (4 << 10) | (1 << 5); // Type(Status:4), Cycle(1)
 		ep0_ring->push(setup);
 		ep0_ring->push(data);
         status_ptr = (TRB*)ep0_ring->push(status);
         memset((void*)(desc_phys + MMIO_BASE), 0, 4096);
-        __asm__ __volatile__("sfence" ::: "memory");
-        controller->doorbell_base[slot_id] = 0; // 한번 클리어
         __asm__ __volatile__("mfence" ::: "memory");
         uart_print("ep0 state="); uart_print_hex(output_ctx->endpoints[0].info1 & 0x7); uart_print("\n");
         uart_print("ep0 tr_ptr="); uart_print_hex(output_ctx->endpoints[0].tr_ptr); uart_print("\n");
@@ -188,7 +186,9 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
         
         uint8_t* ptr = desc;
         uint8_t* end = desc + total_length;
-
+        uint8_t config_value = 1;
+        device_type = DEVICE_UNKNOWN;
+        memset(&device_info, 0, sizeof(device_info));
         uart_print("\n--- Parsing Configuration Descriptor ---\n");
 
         while (ptr < end) {
@@ -198,8 +198,9 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
             if (length == 0) break; // 잘못된 데이터 방지
 
             switch (type) {
-            case 0x02: { // Configuration
+            case 0x02: {
                 ConfigurationDescriptor* cfg = (ConfigurationDescriptor*)ptr;
+                config_value = cfg->bConfigurationValue;
                 if (device_type == DEVICE_MSC) {
                     device_info.msc.config_value = cfg->bConfigurationValue;
                 }
@@ -240,7 +241,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
                         }
                     }
                 }
-                else if (device_type == DEVICE_HID) {
+                else if (device_type == DEVICE_HID && device_info.hid.ep_addr == 0) {
                     if ((ep->bmAttributes & 0x03) == 0x03 && (ep->bEndpointAddress & 0x80)) {
                         device_info.hid.ep_addr = ep->bEndpointAddress;
                         device_info.hid.interval = ep->bInterval;
@@ -251,7 +252,9 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
             }
             case 0x21: { // HID Descriptor
                 uint16_t rep_len = ptr[7] | (ptr[8] << 8); // wDescriptorLength
-                device_info.hid.report_desc_len = rep_len;
+                if (device_type == DEVICE_HID && device_info.hid.report_desc_len == 0) {
+                    device_info.hid.report_desc_len = rep_len;
+                }
 				uart_print("\nHID Report Descriptor Length: "); uart_print_hex(rep_len);
                 break;
             }
@@ -259,6 +262,19 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
             ptr += length; // 다음 디스크립터로 점프
         }
         uart_print("\n---------------------------------------\n");
+        setup.parameter1 = 0x00000900 | ((uint32_t)config_value << 16);
+        setup.parameter2 = 0;
+        setup.status = 8;
+        setup.control = (2 << 10) | (1 << 6);
+
+        status.control = (4 << 10) | (1 << 5) | (1 << 16);
+
+        ep0_ring->push(setup);
+        status_ptr = (TRB*)ep0_ring->push(status);
+        __asm__ __volatile__("sfence" ::: "memory");
+        controller->doorbell_base[slot_id] = 1;
+        controller->wait_command(status_ptr, slot_id, port_id, 32);
+        uart_print("SET_CONFIGURATION done\n");
         switch (device_type) {
         case DEVICE_MSC:
         {
@@ -290,7 +306,7 @@ void XHCIDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::init
             setup.parameter2 = ((uint32_t)device_info.hid.report_desc_len << 16)
                 | device_info.hid.interface_number;
             setup.status = 8;
-            setup.control = (2 << 10) | (1 << 6);
+            setup.control = (2 << 10) | (1 << 6) | (3 << 16);
 
             uint64_t rep_phys = phy_page_allocator->alloc_phy_page();
             virt_page_allocator->alloc_virt_page(rep_phys + MMIO_BASE, rep_phys,
@@ -429,6 +445,9 @@ void XHCIController::init() {
                     __asm__ __volatile__("pause");
                 }
                 uart_print("[XHCI] BIOS Handoff done\n");
+                volatile uint32_t* legctl = xecp + 1;
+                *legctl = (*legctl & 0x7FFF1FEE) | 0xE0000000;
+                uart_print("[XHCI] LEGCTLSTS="); uart_print_hex(*legctl); uart_print("\n");
                 break;
             }
             uint32_t next = (cap >> 8) & 0xFF;
@@ -549,13 +568,13 @@ void XHCIController::init() {
     // ERST 크기 설정 (우리는 1개만 썼으니 1)
     *(volatile uint32_t*)(intr_base + 0x08) = 1;
 
-    // ERST 주소 설정 (64비트 물리 주소)
-    *(volatile uint64_t*)(intr_base + 0x10) = erst_phys;
-
     // ERDP (Dequeuer Pointer) 설정: 
     // 하드웨어에게 "나 여기서부터 읽을 거야"라고 알려주는 포인터.
     // 처음에는 첫 번째 Segment의 물리 주소를 넣어줍니다.
     *(volatile uint64_t*)(intr_base + 0x18) = event_seg_phys;
+
+    // ERST 주소 설정 (64비트 물리 주소)
+    *(volatile uint64_t*)(intr_base + 0x10) = erst_phys;
 
     event_ring = new (event_ring_buff) EventRing(event_seg_virt, event_seg_phys, 256);
 
@@ -608,34 +627,19 @@ void XHCIController::init() {
         //uint32_t portsc = portscs[i - 1];
         volatile uint32_t* portsc_reg = (volatile uint32_t*)(op_base + 0x400 + (i - 1) * 0x10);
         volatile uint32_t portsc = *portsc_reg;
-        if (!(*portsc_reg & (1 << 9))) continue; // PP=0이면 스킵
-        if (!(*portsc_reg & 0x1)) {
-            // CCS=0일 때만 리셋 시도
-            bool is_usb3 = (*portsc_reg & (1 << 19)); // WRC 비트로 구분
-            if (is_usb3) {
-                *portsc_reg = (*portsc_reg & ~0x1F) | (1u << 31);
-                while (*portsc_reg & (1u << 31)) { __asm__ __volatile__("pause"); }
-                while (*portsc_reg & (1u << 4)) { __asm__ __volatile__("pause"); }
-            }
-            else {
-                *portsc_reg = (*portsc_reg & ~0x1F) | (1 << 4);
-                while (*portsc_reg & (1 << 4)) { __asm__ __volatile__("pause"); }
-            }
-            portsc = *portsc_reg;
+        if (!(*portsc_reg & (1 << 9))) continue;
+        if (*portsc_reg & 0x1) {
+            *portsc_reg = (*portsc_reg & ~0x1F) | (1 << 4);
+            while (*portsc_reg & (1 << 4)) { __asm__ __volatile__("pause"); }
+            *portsc_reg = (*portsc_reg & ~0x1F) | (1 << 21);
+            while (!(*portsc_reg & (1 << 1))) { __asm__ __volatile__("pause"); }
         }
-        while (*portsc_reg & (1u << 4)) { __asm__ __volatile__("pause"); }
-        // W1C 비트만 클리어 (하위 5비트 건드리지 않음)
         uint32_t cur = *portsc_reg;
-        // RW 비트 보존, W1C 비트만 1로 세팅
         *portsc_reg = (cur & ~0x1F) | (cur & ((1 << 17) | (1 << 18) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 23)));
 
-        // PED=1 될 때까지 대기
-        //while (!(*portsc_reg & (1 << 1))) { __asm__ __volatile__("pause"); }
         portsc = *portsc_reg;
-        uint32_t pls = (*portsc_reg >> 5) & 0xF;
-		//uart_print("[XHCI] Port "); uart_print(i);
-        //uart_print(" PORTSC="); uart_print_hex(portsc); uart_print("\n");
-        if (pls == 5) continue; // RxDetect = 장치 없음
+        uint32_t pls = (portsc >> 5) & 0xF;
+        if (pls == 5) continue;
 
         if (portsc & 0x1) { // 장치 발견!
             // 1. Enable Slot 던지기
@@ -655,15 +659,26 @@ void XHCIController::init() {
             uint32_t slot_id = (ev.control >> 24) & 0xFF;
 			//uart_print("Enable Slot Event: Slot ID="); uart_print_hex(slot_id);
 			//uart_print("\n");
+            uart_print("[XHCI] Slot Enable Event: slot_id=");
+            uart_print_hex(slot_id);
+            uart_print(" port=");
+            uart_print_hex(i);
+            uart_print(" is_64byte=");
+            uart_print_hex(is_64byte_context);
+            uart_print("\n");
             if (((ev.control >> 10) & 0x3F) == 0x21 && comp_code == 1) {
                 if (is_64byte_context) {
                     auto dev = new XHCIDevice<InputContext64, DeviceContext64, SlotContext64, EndpointContext64>(slot_id, i, portsc_reg, dcbaa, this);
                     devices64.push_back(dev);
+                    uart_print("dev ptr: "); uart_print_hex((uint64_t)dev); uart_print("\n");
+                    uart_print("slot_id: "); uart_print_hex(slot_id); uart_print("\n");
 					dev->init();
                 }
                 else {
                     auto dev = new XHCIDevice<InputContext32, DeviceContext32, SlotContext32, EndpointContext32>(slot_id, i, portsc_reg, dcbaa, this);
 					devices32.push_back(dev);
+                    uart_print("dev ptr: "); uart_print_hex((uint64_t)dev); uart_print("\n");
+                    uart_print("slot_id: "); uart_print_hex(slot_id); uart_print("\n");
 					dev->init();
                 }
             }
@@ -678,11 +693,24 @@ void XHCIController::eoi() {
 EventTRB XHCIController::execute_command(TRB cmd) {
     cmd_ring->push(cmd);
     doorbell_base[0] = 0;
+    uart_print("[CMD] send type="); uart_print_hex((cmd.control >> 10) & 0x3F); uart_print("\n");
     EventTRB ev;
     do {
-        while (!event_ring->has_event()) { __asm__ __volatile__("pause"); }
+        uint64_t spin = 0;
+        while (!event_ring->has_event()) {
+            __asm__ __volatile__("pause":::"memory");
+            if (++spin == 100000000) {
+                spin = 0;
+                uart_print("[CMD] wait USBSTS="); uart_print_hex(*usbsts);
+                uart_print(" ctrl="); uart_print_hex(event_ring->get_current_control());
+                uart_print(" cyc="); uart_print_hex(event_ring->get_cycle_bit());
+                uart_print("\n");
+            }
+        }
         ev = event_ring->pop();
         event_ring->erdp(intr_base);
+        uart_print("[CMD] ev type="); uart_print_hex((ev.control >> 10) & 0x3F);
+        uart_print(" code="); uart_print_hex((ev.status >> 24) & 0xFF); uart_print("\n");
     } while (((ev.control >> 10) & 0x3F) != 0x21);
     return ev;
 }
@@ -702,7 +730,7 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
         while(1) {
             while (!event_ring->has_event()) { 
                 while (!event_ring->has_event()) {
-                    __asm__ __volatile__("pause");
+                    __asm__ __volatile__("pause":::"memory");
                     //uart_print("\r[XHCI] USBSTS="); uart_print_hex(*usbsts);
                     //uart_print(" ring[idx].control="); uart_print_hex(event_ring->get_current_control());
                     //uart_print(" cycle="); uart_print_hex(event_ring->get_cycle_bit());
@@ -721,10 +749,10 @@ EventTRB XHCIController::wait_command(TRB* ptr, uint32_t slot_id, uint32_t port_
             if (ev.ptr != (uint64_t)ptr ||
                 ((ev.control >> 10) & 0x3F) != expected_type ||
                 ((ev.control >> 24) & 0xFF) != slot_id ||
-                (expected_ep != 0 && ((ev.control >> 16) & 0xFF) != expected_ep)) {
+                (expected_ep != 0 && ((ev.control >> 16) & 0x1F) != expected_ep)) {
                 for (int i = 0; i < xhci_event->size(); i++) {
                     KEvent event = (*xhci_event)[i];
-                    if (event.arg[0] == ev.ptr && event.arg[1] == ((ev.control >> 24) & 0xFF) && event.arg[2] == ((ev.control >> 16) & 0xFF)) {
+                    if (event.arg[0] == ev.ptr && event.arg[1] == ((ev.control >> 24) & 0xFF) && event.arg[2] == ((ev.control >> 16) & 0x1F)) {
                         if (event.callback != nullptr && event.callback != basic_callback)
                             event.callback(&event, ev.status, ev.control, event.callback_ctx);
                         //uart_print("[XHCI] KEvent arg0="); uart_print_hex(event.arg[0]);
@@ -792,20 +820,10 @@ void xhci_handler(interrupt_frame_t* frame) {
             else if (type == 32) {
                 uint8_t slot_id = (uint8_t)(ev.control >> 24);         // 상위 8비트
                 uint8_t endpoint_id = (uint8_t)((ev.control >> 16) & 0x1F); // 16~20비트
-                /*
-                uart_print("[XHCI] Transfer Event ptr="); uart_print_hex(ev.ptr);
-                uart_print(" slot="); uart_print_hex(slot_id);
-                uart_print(" ep="); uart_print_hex(endpoint_id);
-                uart_print("\n");
-                */
+                
                 for (int i = 0; i < xhci_event->size(); i++) {
                     KEvent event = (*xhci_event)[i];
-                    /*
-                    uart_print("[XHCI] KEvent arg0="); uart_print_hex(event.arg[0]);
-                    uart_print(" arg1="); uart_print_hex(event.arg[1]);
-                    uart_print(" arg2="); uart_print_hex(event.arg[2]);
-                    uart_print("\n");
-                    */
+                    
                     if (event.arg[0] == ev.ptr && event.arg[1] == slot_id && event.arg[2] == endpoint_id) {
                         event.callback(&event, ev.status, ev.control, event.callback_ctx);
                         xhci_event->erase(i);

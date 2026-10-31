@@ -1,7 +1,7 @@
 # mykernel 아래 모든 .cpp 재귀 수집 (stub/ 은 .S 라 제외). 새 디렉터리 추가돼도 자동 포함.
 # CONFIGURE_DEPENDS: 파일 추가/삭제 시 빌드에서 자동 재-glob.
 file(GLOB_RECURSE KERNEL_SRCS CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/include/*
 )
 list(FILTER KERNEL_SRCS EXCLUDE REGEX "/stub/")
 
@@ -14,6 +14,9 @@ target_include_directories(mykernel PRIVATE include)
 target_link_libraries(mykernel PRIVATE myos_flags)
 
 target_compile_options(mykernel PRIVATE -Werror)
+
+# 함수별 스택 프레임 크기 측정 (.su 파일 생성). 코드 생성엔 영향 없음.
+target_compile_options(mykernel PRIVATE -fstack-usage)
 
 target_link_options(mykernel PRIVATE
     -nostdlib

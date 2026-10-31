@@ -38,7 +38,7 @@ void E1000::init() {
     while (*ctrl & CTRL_RESET);
     *imc = 0xFFFFFFFF;
     *ctrl |= CTRL_SLU;
-    while (!(*status & STATUS_LU));
+    //while (!(*status & STATUS_LU));  // 구지?
     volatile uint32_t* eerd = (volatile uint32_t*)(mmio_base + E1000_EERD);
     uint8_t mac[6];
     uint32_t E1000_EERD_ADDR_SHIFT, E1000_EERD_DONE;

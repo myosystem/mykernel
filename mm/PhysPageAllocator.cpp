@@ -5,6 +5,7 @@
 #ifdef TEST_MODE
 extern uint64_t forkdbg[8];
 #endif
+uint64_t hint = 0;
 volatile uint32_t ppaspinv = 0;
 inline void _lockp() {
 	while (__atomic_test_and_set(&ppaspinv, __ATOMIC_ACQUIRE)) {
@@ -19,27 +20,31 @@ uint64_t PhysPageAllocator::alloc_phy_page() {
     uint64_t __p0 = rdtsc_get();
 #endif
     _lockp();
-    for (uint64_t i = 0; i < (total_pages + 63) / 64; i++) {
-        if (bitmap[i] != 0xFFFFFFFFFFFFFFFF) { // 아직 빈 페이지가 있음
-            for (int j = 0; j < 64; j++) {
-                if (!(bitmap[i] & (1ULL << j))) { // 빈 페이지 발견
-                    bitmap[i] |= (1ULL << j);
-                    used_pages++;
-					refcount[i * 64 + j] = 1;
+    uint64_t words = (total_pages + 63) / 64;
+    for (uint64_t n = 0; n < words; n++) {
+        uint64_t i = hint + n;
+        if (i >= words) i -= words;
+        uint64_t w = bitmap[i];
+        if (w == 0xFFFFFFFFFFFFFFFF) continue;
+        int j = __builtin_ctzll(~w);
+        uint64_t page = i * 64 + j;
+        if (page >= total_pages) continue;
+        bitmap[i] |= (1ULL << j);
+        used_pages++;
+        refcount[page] = 1;
+        hint = i;
 #ifdef TEST_MODE
-                    forkdbg[3] += rdtsc_get() - __p0; forkdbg[6]++;
-#endif // 참조 카운트 초기화
-                    _unlockp();
-                    return (i * 64 + j) * 4096;
-                }
-            }
-        }
+        forkdbg[3] += rdtsc_get() - __p0; forkdbg[6]++;
+#endif
+        _unlockp();
+        return page * 4096;
     }
     uart_print("page error!!\n");
     _unlockp();
-    return 0; // 더 이상 할당할 페이지가 없음
+    return 0;
 }
 uint64_t PhysPageAllocator::alloc_phy_pages(uint64_t page_count) {
+    if (page_count == 1) return alloc_phy_page();
     _lockp();
     uint64_t start_page = 0;
     uint64_t found_count = 0;

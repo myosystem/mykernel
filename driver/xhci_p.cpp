@@ -116,7 +116,8 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
     // 3. Slot Context 설정
     // InputContext -> ctx -> slot 순서로 접근
     uint8_t max_dci = (dci_in > dci_out) ? dci_in : dci_out;
-    input_ctx->ctx.slot.info1 = (max_dci << 27);
+    input_ctx->ctx.slot = device->output_ctx->slot;
+    input_ctx->ctx.slot.info1 = (input_ctx->ctx.slot.info1 & ~(0x1Fu << 27)) | ((uint32_t)max_dci << 27);
     // ※ 주의: SlotContext32의 info1 비트 레이아웃에 맞춤. 
     // 만약 64비트 구조체에서 필드명이 다르면 여기서 템플릿 특수화나 다른 처리가 필요할 수 있음.
 
@@ -124,13 +125,14 @@ bool XHCI_BOT_Protocol<InputContext, DeviceContext, SlotContext, EndpointContext
     // dci는 1(EP0)부터 시작하므로 배열 인덱스는 dci - 1
     auto& ep_in = input_ctx->ctx.endpoints[dci_in - 1];
     ep_in.info1 = (3 << 1);            // Error Count: 3
-    ep_in.info2 = (6 << 3) | (512 << 16); // Type: Bulk IN(6), MPS: 512
+    uint32_t mps = device->max_packet_size ? device->max_packet_size : 512;
+    ep_in.info2 = (6 << 3) | (mps << 16);
     ep_in.tr_ptr = bulk_in->get_phys() | 1; // DCS=1
 
     // 5. Bulk-OUT Endpoint Context 설정
     auto& ep_out = input_ctx->ctx.endpoints[dci_out - 1];
     ep_out.info1 = (3 << 1);            // Error Count: 3
-    ep_out.info2 = (2 << 3) | (512 << 16); // Type: Bulk OUT(2), MPS: 512
+    ep_out.info2 = (2 << 3) | (mps << 16);
     ep_out.tr_ptr = bulk_out->get_phys() | 1;
 
     // 6. xHCI 명령 전송 (물리 주소 전달)

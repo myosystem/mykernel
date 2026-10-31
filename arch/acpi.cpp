@@ -10,13 +10,14 @@
 // Physical RAM is mapped at HHDM_BASE, so access via (phys + HHDM_BASE).
 void acpi_dump_rsdp() {
     uint64_t phys = (uint64_t)bootinfo->rsdp;
-    uart_print("[ACPI] rsdp phys=0x");
-    uart_print_hex(phys);
-    uart_putc('\n');
+    //uart_print("[ACPI] rsdp phys=0x");
+    //uart_print_hex(phys);
+    //uart_putc('\n');
     if (phys == 0) { uart_print("[ACPI] rsdp is NULL\n"); return; }
 
     RSDP* r = (RSDP*)(phys + HHDM_BASE);
 
+    /*
     uart_print("[ACPI] sig='");
     for (int i = 0; i < 8; i++) uart_putc(r->signature[i]);
     uart_print("' oemid='");
@@ -32,7 +33,7 @@ void acpi_dump_rsdp() {
         uart_print((uint64_t)r->length);
     }
     uart_putc('\n');
-
+    */
     // verify v1 checksum: sum of first 20 bytes must be 0
     uint8_t sum = 0;
     uint8_t* p = (uint8_t*)r;
@@ -49,15 +50,15 @@ static bool sig_is(const char* s, const char* four) {
 
 static void dump_one(uint64_t table_phys) {
     SDTHeader* t = (SDTHeader*)(table_phys + HHDM_BASE);
-    uart_print("[ACPI]   ");
-    for (int j = 0; j < 4; j++) uart_putc(t->signature[j]);
-    uart_print(" @ 0x");
-    uart_print_hex(table_phys);
+    //uart_print("[ACPI]   ");
+    //for (int j = 0; j < 4; j++) uart_putc(t->signature[j]);
+    //uart_print(" @ 0x");
+    //uart_print_hex(table_phys);
     if (sig_is(t->signature, "FACP")) {
         g_fadt = t;
-        uart_print("  <- FADT");
+        //uart_print("  <- FADT");
     }
-    uart_putc('\n');
+    //uart_putc('\n');
 }
 
 void acpi_dump_xsdt() {

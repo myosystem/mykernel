@@ -22,7 +22,8 @@ CXXFLAGS := \
   -ffreestanding -fno-rtti -fno-exceptions \
   -fno-zero-initialized-in-bss -fno-common \
   -mno-sse -mno-sse2 -mno-mmx -mno-3dnow -mno-80387 \
-  -msoft-float -mno-red-zone -g
+  -msoft-float -mno-red-zone \
+  -fno-stack-protector -Werror=return-type -g
 
 ifeq ($(CONFIG),Release)
   CXXFLAGS += -O2
@@ -38,6 +39,9 @@ endif
 ifdef TEST_MODE
   CXXFLAGS += -DTEST_MODE
 endif
+
+# 함수별 스택 프레임 크기 측정 (.su 파일 생성). 코드 생성엔 영향 없음.
+CXXFLAGS += -fstack-usage
 
 INCLUDES := -Iinclude
 

@@ -398,11 +398,13 @@ void XHCIHIDDevice<InputContext, DeviceContext, SlotContext, EndpointContext>::i
     uint8_t speed = (*xhci_dev->portsc >> 10) & 0x0F;
     uint8_t interval = xhci_dev->device_info.hid.interval;
     if (speed == 1 || speed == 2) {
-        uint8_t converted = 0;
-        while ((1u << converted) < interval) converted++;
-        interval = converted;
+        uint8_t l = 0;
+        while ((1u << (l + 1)) <= interval) l++;
+        interval = 3 + l;
     }
-    if (interval > 0) interval--;
+    else if (interval > 0) {
+        interval--;
+    }
     
     // 4. EP Context 채우기
     input_ctx->ctx.endpoints[dci - 1].info2 = (7 << 3) | ((uint32_t)max_packet_size << 16);

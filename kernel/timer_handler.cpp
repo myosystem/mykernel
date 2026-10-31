@@ -2,6 +2,7 @@
 #include "arch/lapic.h"
 #include "debug/log.h"
 #include "kernel/process.h"
+#include "net/tcp.h"
 #define min(a, b) ((a) < (b) ? (a) : (b))
 char uart_buf[1000];
 uint64_t next_process_time = 0;
@@ -50,6 +51,9 @@ extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame)
 				};
                 target_process->msg_recv(msg, false);
             }
+        }
+        else if (event.type == EVENT_TYPE_TCP_RTO) {
+			event.callback(&event,0,0,0);
         }
         if (event.interval > 0) {
             Process* target_process = GetProcess(event.process_id);
