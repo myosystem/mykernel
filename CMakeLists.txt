@@ -38,32 +38,44 @@ add_custom_command(TARGET mykernel POST_BUILD
     VERBATIM
 )
 
-# stub/*.S → 각각 .o 로 컴파일 후 boot 파티션에 복사
+# stub/*.S 전부 → .o 들 → ld 로 하나로 링크 → objcopy 로 평평한 바이너리 → boot 파티션의 signal.o
+# 커널이 "#0/EFI/BOOT/signal.o" 라는 이름으로 읽어 신호 트램폴린 페이지에 적재한다.
 file(GLOB STUB_SRCS stub/*.S)
-foreach(STUB_SRC ${STUB_SRCS})
-    get_filename_component(STUB_NAME ${STUB_SRC} NAME_WE)
-    set(STUB_OBJ ${CMAKE_CURRENT_BINARY_DIR}/stub/${STUB_NAME}.o)
+if(STUB_SRCS)
+    set(STUB_DIR ${CMAKE_CURRENT_BINARY_DIR}/stub)
+    set(STUB_ELF ${STUB_DIR}/signal.elf)
+    set(STUB_BIN ${STUB_DIR}/signal.bin)
+
+    set(STUB_OBJS "")
+    foreach(STUB_SRC ${STUB_SRCS})
+        get_filename_component(STUB_NAME ${STUB_SRC} NAME_WE)
+        set(STUB_OBJ ${STUB_DIR}/${STUB_NAME}.o)
+        add_custom_command(
+            OUTPUT ${STUB_OBJ}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${STUB_DIR}
+            COMMAND ${CMAKE_CXX_COMPILER} -m64 -c ${STUB_SRC} -o ${STUB_OBJ}
+            DEPENDS ${STUB_SRC}
+            VERBATIM
+        )
+        list(APPEND STUB_OBJS ${STUB_OBJ})
+    endforeach()
 
     add_custom_command(
-        OUTPUT ${STUB_OBJ}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/stub
-        COMMAND ${CMAKE_CXX_COMPILER} -m64 -c ${STUB_SRC} -o ${STUB_OBJ}
-        DEPENDS ${STUB_SRC}
+        OUTPUT ${STUB_BIN}
+        COMMAND ld -nostdlib -Ttext=0 -o ${STUB_ELF} ${STUB_OBJS}
+        COMMAND objcopy -O binary
+            --only-section=.text --only-section=.rodata --only-section=.data
+            ${STUB_ELF} ${STUB_BIN}
+        DEPENDS ${STUB_OBJS}
         VERBATIM
     )
 
-    add_custom_target(stub_${STUB_NAME} ALL
-        DEPENDS ${STUB_OBJ}
-    )
+    # makeimg 가 의존할 수 있도록 유지되는 타깃 이름
+    add_custom_target(kernel_stubs ALL DEPENDS ${STUB_BIN})
 
-    add_custom_command(TARGET stub_${STUB_NAME} POST_BUILD
+    add_custom_command(TARGET kernel_stubs POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory ${BOOT_EFI_DIR}
-        COMMAND ${CMAKE_COMMAND} -E copy ${STUB_OBJ} ${BOOT_EFI_DIR}/${STUB_NAME}.o
+        COMMAND ${CMAKE_COMMAND} -E copy ${STUB_BIN} ${BOOT_EFI_DIR}/signal.o
         VERBATIM
     )
-
-    list(APPEND STUB_TARGETS stub_${STUB_NAME})
-endforeach()
-
-# makeimg 가 의존할 수 있도록 stub 타깃들을 하나로 집계
-add_custom_target(kernel_stubs DEPENDS ${STUB_TARGETS})
+endif()

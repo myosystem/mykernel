@@ -212,9 +212,12 @@ void Process::addCode(void* code_addr) {
     pallocator->alloc_virt_page(code_va_base, code, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
     code_va_base += PageSize;
 }
+void Process::set_trampoline() {
+    pallocator->alloc_virt_page(code_va_base, trampoline_pa, VirtPageAllocator::P | VirtPageAllocator::US);
+}
 void Process::setHeap() {
-    heap_bottom = code_va_base;
-	heap_top = code_va_base;    // 힙은 비어있는 상태로 시작
+    heap_bottom = code_va_base + PageSize;
+	heap_top    = heap_bottom;    // 힙은 비어있는 상태로 시작
 }
 uint64_t sig_page_phys;
 alignas(Process) uint8_t idle_process_buf[sizeof(Process)];

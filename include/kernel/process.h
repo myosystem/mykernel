@@ -179,6 +179,7 @@ void pinit(void* obj);
 void pdestroy(void* obj);
 class Process : public NewObject<PROCESS_QUEUE_BASE, 512, pinit, pdestroy> {
 private:
+    static inline uint64_t trampoline_pa = 0;
     queue<msg_t> msgq;
     volatile bool msg_lock = false;
 	queue<uint64_t> waiting_msgq; // 메시지 대기 중인 프로세스들의 PID 저장
@@ -205,7 +206,11 @@ public:
     SSEBuffer* sse_buffer;
     Process(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init = true);
     ~Process();
+    static void set_trampoline(uint64_t pa) {
+        trampoline_pa = pa;
+    }
     void addCode(void* code_addr);
+    void set_trampoline();
     void setHeap();
     mmap_entry* isAddrInMMap(uint64_t va) const;
     uint64_t mmap(uint64_t size, uint64_t flags, uint64_t arg);
