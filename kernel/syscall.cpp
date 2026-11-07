@@ -561,12 +561,18 @@ __attribute__((noinline)) void syscall_handler(context_t* frame) {
 	case 50: // exit
 	{
 		Process* exiting = now_process;
-		exiting->time_slice = frame->rdi; // 리턴값 남는곳에 저장
+		exiting->time_slice = (uint32_t)frame->rdi; // 리턴값 남는곳에 저장
 		exiting->~Process();
 		if (exiting->parent == (uint64_t)-1) {
 			Process::operator delete(exiting);
 		}
 		now_process = next_process();
+		next_process_time = tsc_get() + ms_to_ticks(now_process->time_slice);
+		uint64_t nexttime = next_process_time;
+		if (time_event->isEmpty() == false) {
+			nexttime = min(next_process_time, time_event->top().time);
+		}
+		tsc_deadline_set(nexttime);
 		now_process->run_process();
 		break;
 	}
