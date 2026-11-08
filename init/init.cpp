@@ -3,12 +3,11 @@
 #include "util/util.h"
 #include "mm/allocator"
 #include "debug/log.h"
-#include "arch/idt.h"
 #include "arch/msr.h"
 #include "arch/acpi.h"
 #include "arch/ioapic.h"
 #include "arch/lapic.h"
-#include "arch/handler.h"
+#include "arch/interrupt.h"
 #include "driver/ahci_c.h"
 #include "arch/pci.h"
 #include "driver/disk.h"
@@ -16,7 +15,6 @@
 #include "driver/xhci_c.h"
 #include "driver/e1000.h"
 #include "net/netdevice.h"
-#include "net/ip.h"
 
 // 최종 APIC 초기화
 void init_apic() {
@@ -30,27 +28,6 @@ void init_apic() {
     ioapic_set_redirection(12, 0x2C, 0);
     enable_cursor();  // PS/2 mouse absent on VMware -> would hang; mouse is xHCI
 	enable_keyboard();
-}
-
-void init_interrupts() {
-	init_allocators(bootinfo->physbm, bootinfo->refcount, bootinfo->physbm_size);
-    init_apic();
-    for (int i = 0; i < IDT_SIZE; i++) {
-        set_idt_gate(i, (uint64_t)none_handler, 0x08, 0x8E);
-    }
-    set_idt_gate(8, (uint64_t)double_fault_handler, 0x08, 0x8E);
-	set_idt_gate(13, (uint64_t)general_protection_fault_handler, 0x08, 0x8E);
-	set_idt_gate(14, (uint64_t)page_fault_handler, 0x08, 0x8E);
-	set_idt_gate(12, (uint64_t)stack_segment_fault_handler, 0x08, 0x8E);
-
-    set_idt_gate(32, (uint64_t)timer_handler, 0x08, 0x8E);
-    set_idt_gate(33, (uint64_t)keyboard_handler, 0x08, 0x8E);
-    set_idt_gate(0x2C, (uint64_t)mouse_handler, 0x08, 0x8E);
-    set_idt_gate(0x35, (uint64_t)xhci_handler, 0x08, 0x8E);
-    set_idt_gate(0x36, (uint64_t)e1000_handler, 0x08, 0x8E);
-	set_idt_gate(0x80, (uint64_t)syscall_idthandler, 0x08, 0xEE);
-	set_idt_gate(0x81, (uint64_t)waiting_idthandler, 0x08, 0xEE);
-    load_idt();
 }
 vector<Controller*>* controllers;
 alignas(vector<Controller*>) uint8_t controller_buf[sizeof(vector<Controller*>)];
@@ -91,6 +68,8 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     uart_init();
     setup_cpu();
     init_tss(0, 0);
+    init_allocators(bootinfo->physbm, bootinfo->refcount, bootinfo->physbm_size);
+    init_apic();
     init_interrupts();
     for (uint64_t i = PML4::PML4_POOL_GUARD_LOW + 1; i < PML4::PML4_POOL_GUARD_HIGH; i++) {
         volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
