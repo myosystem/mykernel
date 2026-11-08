@@ -60,12 +60,11 @@ SRCS := $(shell find . -path './stub' -prune -o -name '*.cpp' -print)
 OBJS := $(addprefix $(OUTDIR)/,$(SRCS:.cpp=.o))
 
 # ---------------------------------------------------------------
-# stub — *.S 전부를 하나로 링크해 평평한 바이너리로. 커널이 signal.o 라는 이름으로 읽는다.
+# stub — nasm 으로 평평한 바이너리. 커널이 signal.o 라는 이름으로 읽는다.
 # ---------------------------------------------------------------
-STUB_SRCS := $(shell find stub -name '*.S' 2>/dev/null)
-STUB_OBJS := $(addprefix $(OUTDIR)/,$(STUB_SRCS:.S=.o))
-STUB_ELF  := $(OUTDIR)/stub/signal.elf
-STUB_OUT  := $(BOOT_DIR)/signal.o
+NASM     := nasm
+STUB_SRC := stub/signal_trampoline.asm
+STUB_OUT := $(BOOT_DIR)/signal.o
 
 # ---------------------------------------------------------------
 
@@ -73,12 +72,11 @@ STUB_OUT  := $(BOOT_DIR)/signal.o
 
 all: $(TARGET) stub
 
-stub: $(STUB_OBJS)
-	@mkdir -p $(BOOT_DIR) $(OUTDIR)/stub
-	ld -nostdlib -Ttext=0 -o $(STUB_ELF) $(STUB_OBJS)
-	$(OBJCOPY) -O binary \
-	  --only-section=.text --only-section=.rodata --only-section=.data \
-	  $(STUB_ELF) $(STUB_OUT)
+stub: $(STUB_OUT)
+
+$(STUB_OUT): $(STUB_SRC)
+	@mkdir -p $(BOOT_DIR)
+	$(NASM) -f bin $(STUB_SRC) -o $(STUB_OUT)
 	@echo "[stub] → $(STUB_OUT)"
 
 $(TARGET): $(OBJS)
@@ -90,11 +88,6 @@ $(TARGET): $(OBJS)
 	  $(TARGET) $(BOOT_OUT)
 	@echo "[mykernel] done → $(TARGET)"
 	@echo "[mykernel] objcopy → $(BOOT_OUT)"
-
-# stub .S 빌드 규칙
-$(OUTDIR)/stub/%.o: stub/%.S
-	@mkdir -p $(dir $@)
-	$(CXX) -m64 -c $< -o $@
 
 # 서브디렉터리 오브젝트 파일 규칙
 $(OUTDIR)/%.o: %.cpp

@@ -6,7 +6,8 @@
 *.h text diff=cpp
 *.h linguist-language=C++
 * linguist-language=C++
-Makefile linguist-language=Makefile
+Makefile linguist-vendored
+CMakeLists.txt linguist-vendored
 *.ld linguist-language=LinkerScript
 *.lds linguist-language=LinkerScript
 ###############################################################################
