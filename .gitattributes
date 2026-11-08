@@ -5,7 +5,7 @@
 *.cpp text diff=cpp
 *.h text diff=cpp
 *.h linguist-language=C++
-myos/* linguist-language=C++
+* linguist-language=C++
 Makefile linguist-language=Makefile
 *.ld linguist-language=LinkerScript
 *.lds linguist-language=LinkerScript
