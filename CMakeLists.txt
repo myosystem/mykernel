@@ -1,9 +1,8 @@
-# mykernel 아래 모든 .cpp 재귀 수집 (stub/ 은 .S 라 제외). 새 디렉터리 추가돼도 자동 포함.
+# mykernel 아래 모든 .cpp 재귀 수집. 새 디렉터리 추가돼도 자동 포함.
 # CONFIGURE_DEPENDS: 파일 추가/삭제 시 빌드에서 자동 재-glob.
 file(GLOB_RECURSE KERNEL_SRCS CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/include/*
 )
-list(FILTER KERNEL_SRCS EXCLUDE REGEX "/stub/")
 
 add_executable(mykernel ${KERNEL_SRCS})
 
@@ -35,27 +34,5 @@ add_custom_command(TARGET mykernel POST_BUILD
         --only-section=.text --only-section=.rodata --only-section=.data
         $<TARGET_FILE:mykernel>
         ${BOOT_EFI_DIR}/os.bin
-    VERBATIM
-)
-
-# stub/signal_trampoline.asm → nasm -f bin → 평평한 바이너리 → boot 파티션의 signal.o
-# 커널이 "#0/EFI/BOOT/signal.o" 라는 이름으로 읽어 신호 트램폴린 페이지에 적재한다.
-set(STUB_SRC ${CMAKE_CURRENT_SOURCE_DIR}/stub/signal_trampoline.asm)
-set(STUB_BIN ${CMAKE_CURRENT_BINARY_DIR}/stub/signal.bin)
-
-add_custom_command(
-    OUTPUT ${STUB_BIN}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/stub
-    COMMAND nasm -f bin ${STUB_SRC} -o ${STUB_BIN}
-    DEPENDS ${STUB_SRC}
-    VERBATIM
-)
-
-# makeimg 가 의존할 수 있도록 유지되는 타깃 이름
-add_custom_target(kernel_stubs ALL DEPENDS ${STUB_BIN})
-
-add_custom_command(TARGET kernel_stubs POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${BOOT_EFI_DIR}
-    COMMAND ${CMAKE_COMMAND} -E copy ${STUB_BIN} ${BOOT_EFI_DIR}/signal.o
     VERBATIM
 )

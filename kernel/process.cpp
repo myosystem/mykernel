@@ -212,8 +212,17 @@ void Process::addCode(void* code_addr) {
     pallocator->alloc_virt_page(code_va_base, code, VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::US);
     code_va_base += PageSize;
 }
+extern "C" char sig_entry[];
+extern "C" char sig_entry_end[];
+void Process::init_trampoline() {
+    uint8_t* pa = (uint8_t*)phy_page_allocator->alloc_phy_page();
+    size_t size = sig_entry_end - sig_entry;
+    memcpy(pa + HHDM_BASE, sig_entry, size);
+    trampoline_pa = (uint64_t)pa;
+}
 void Process::set_trampoline() {
     pallocator->alloc_virt_page(code_va_base, trampoline_pa, VirtPageAllocator::P | VirtPageAllocator::US);
+    phy_page_allocator->get_page(trampoline_pa);
 }
 void Process::setHeap() {
     heap_bottom = code_va_base + PageSize;
@@ -267,10 +276,7 @@ void init_process() {
     );
     idle_process->sse_buffer = new SSEBuffer();
     memcpy(idle_process->sse_buffer->addr(), sse_template, 512);
-}
-void init_trampoline(File* trampoline) {
-    if (trampoline)
-        trampoline->read((void*)(sig_page_phys + HHDM_BASE), PageSize);
+    Process::init_trampoline();
 }
 void add_process(size_t index) {
 	if (index == IDLE_PROCESS_PID) {
@@ -528,7 +534,7 @@ uint64_t Process::fork(context_t* ctx) {
 #ifdef TEST_MODE
     uint64_t __f1 = rdtsc_get();
 #endif // 실행 위치는 부모와 동일
-    if (!child->pallocator->copy(*pallocator, 0x400000, code_va_base - 0x400000)) { // 코드 복사
+    if (!child->pallocator->copy(*pallocator, 0x400000, code_va_base + PageSize - 0x400000)) { // 코드 복사
         delete child;
 		return ~0ULL; // 복사 실패 시 -1 반환
     }
@@ -626,7 +632,7 @@ uint64_t Process::exec(const char* path, const char* argv[], context_t* ctx) {
     }
     phy_page_allocator->put_page(readbuffer - HHDM_BASE);
     delete file;
-
+    set_trampoline();
     // 3. 힙 리셋
     setHeap();
 

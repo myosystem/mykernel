@@ -4,8 +4,6 @@
 # Usage:
 #   make              → Debug 빌드  → bin/x64/Debug/mykernel.efi
 #                                   → ../_bootpartition/.../EFI/BOOT/os.bin
-#                                   → ../_bootpartition/.../EFI/BOOT/*.o (stub)
-#   make stub         → stub/ 만 빌드
 #   make CONFIG=Release
 #   make clean
 # ==============================================================
@@ -53,31 +51,17 @@ BOOT_OUT  := ../_bootpartition/$(PLATFORM)/$(CONFIG)/EFI/BOOT/os.bin
 BOOT_DIR  := ../_bootpartition/$(PLATFORM)/$(CONFIG)/EFI/BOOT
 
 # ---------------------------------------------------------------
-# 소스 파일 — stub/ 제외하고 *.cpp 자동 수집
+# 소스 파일 — *.cpp 자동 수집
 # ---------------------------------------------------------------
-SRCS := $(shell find . -path './stub' -prune -o -name '*.cpp' -print)
+SRCS := $(shell find . -name '*.cpp')
 
 OBJS := $(addprefix $(OUTDIR)/,$(SRCS:.cpp=.o))
 
 # ---------------------------------------------------------------
-# stub — nasm 으로 평평한 바이너리. 커널이 signal.o 라는 이름으로 읽는다.
-# ---------------------------------------------------------------
-NASM     := nasm
-STUB_SRC := stub/signal_trampoline.asm
-STUB_OUT := $(BOOT_DIR)/signal.o
 
-# ---------------------------------------------------------------
+.PHONY: all clean
 
-.PHONY: all stub clean
-
-all: $(TARGET) stub
-
-stub: $(STUB_OUT)
-
-$(STUB_OUT): $(STUB_SRC)
-	@mkdir -p $(BOOT_DIR)
-	$(NASM) -f bin $(STUB_SRC) -o $(STUB_OUT)
-	@echo "[stub] → $(STUB_OUT)"
+all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	@mkdir -p $(OUTDIR)

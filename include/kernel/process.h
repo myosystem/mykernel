@@ -206,9 +206,7 @@ public:
     SSEBuffer* sse_buffer;
     Process(uint64_t cs, uint64_t ss, Partition* partition, uint64_t cwd_cluster, bool full_init = true);
     ~Process();
-    static void set_trampoline(uint64_t pa) {
-        trampoline_pa = pa;
-    }
+    static void init_trampoline();
     void addCode(void* code_addr);
     void set_trampoline();
     void setHeap();
@@ -235,7 +233,6 @@ extern Process* now_process;
 #define IDLE_PROCESS_PID ((unsigned long)-1)
 extern Process* idle_process;
 void init_process();
-void init_trampoline(File* trampoline);
 Process* GetProcess(size_t index);
 void add_process(size_t process_id);
 void add_process(size_t index, uint64_t result);

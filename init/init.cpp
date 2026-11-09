@@ -83,7 +83,6 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     acpi_build_namespace();
     acpi_dump_namespace();
     RouteTable::init();
-    File* trampoline = kernel_open_file("#0/EFI/BOOT/signal.o");
     init_process();
     
 	controllers = new (controller_buf) vector<Controller*>();
@@ -166,6 +165,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     while (display_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         display->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
+    display->set_trampoline();
     display->setHeap();
     delete display_file;
 	add_process(display->id);
@@ -176,6 +176,7 @@ extern "C" __attribute__((force_align_arg_pointer, noinline)) void main() {
     while (test_file->read((void*)readbuffer, PageSize) != 0) { //한페이지씩 읽기
         test->addCode((void*)readbuffer);                    //읽은 내용 옮기기
     }
+    test->set_trampoline();
     test->setHeap();
     delete test_file;
     add_process(test->id);
