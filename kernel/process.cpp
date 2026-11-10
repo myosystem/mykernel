@@ -471,10 +471,10 @@ bool Process::munmap(uint64_t va, uint64_t size) {
 	return true;
 }
 void Process::msg_recv(msg_t msg,bool blocking) {
-    lock_msg();
     if (id == -1) {
         return;
     }
+    lock_msg();
     if (msg.type == MSG_MOUSE_MOVE) {
         msg_t* last = msgq.peek_back();
         if (last && last->type == MSG_MOUSE_MOVE) {
