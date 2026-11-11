@@ -105,7 +105,6 @@ void E1000::handle_irq() {
 
 extern vector<NetDevice*>* netdevices;
 
-__attribute__((interrupt))
 void e1000_handler(interrupt_frame_t* frame) {
     for (int i = 0; i < netdevices->size(); i++) {
         ((E1000*)(*netdevices)[i])->handle_irq();

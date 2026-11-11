@@ -20,7 +20,6 @@ static const uint32_t sc1[] = {
     'b','n','m',',','.','/', KEY_RSHIFT, '*', KEY_LALT, ' ',
 };
 static bool kbd_ext = false;
-__attribute__((interrupt))
 void keyboard_handler(interrupt_frame_t* frame) {
     (void)frame;
     uint8_t sc = inb(0x60);
@@ -54,7 +53,6 @@ static uint8_t mouse_bytes[3];
 int cursor_x = 0;
 int cursor_y = 0;
 uint8_t mouse_state = 0;
-__attribute__((interrupt))
 void mouse_handler(interrupt_frame_t* frame) {
     while (1) {
         uint8_t status = inb(0x64);
@@ -116,85 +114,16 @@ void mouse_handler(interrupt_frame_t* frame) {
     }
     lapic_eoi();
 }
-__attribute__((naked))
-void timer_handler() {
-    asm volatile(
-        // 인터럽트 진입시 트랩 프레임이 이미 스택에 있음 (rip, cs, rflags, [rsp, ss])
-        // 추가적으로 전역/일반 레지스터도 저장
-        "push rax\n\t"
-        "push rbx\n\t"
-        "push rcx\n\t"
-        "push rdx\n\t"
-        "push rsi\n\t"
-        "push rdi\n\t"
-        "push rbp\n\t"
-        "push r8\n\t"
-        "push r9\n\t"
-        "push r10\n\t"
-        "push r11\n\t"
-        "push r12\n\t"
-        "push r13\n\t"
-        "push r14\n\t"
-        "push r15\n\t"
-        "mov rax, ds\n\t"
-        "push rax\n\t"
-        "mov rax, es\n\t"
-        "push rax\n\t"
-        "mov rax, fs\n\t"
-        "push rax\n\t"
-        "mov rax, gs\n\t"
-        "push rax\n\t"
-        // 이제 스택 상태:
-        // [r15][r14]...[rax][RIP][CS][RFLAGS]([RSP][SS]) <- rsp
-
-        // 스택 프레임 주소를 첫 번째 인자(rdi)로 넘기자!
-        "mov rdi, rsp\n\t"
-        // C로 진입! (C에서 스케줄링/컨텍스트스위칭/복원 판단)
-        "call c_timer_handler\n\t"
-        // 들어온곳 그대로 원상복구 (핸들러에서 진입 안했을경우 그대로 복귀)
-
-        // pop 순서대로 pop
-        "pop rax\n\t"
-        "mov gs, ax\n\t"
-        "pop rax\n\t"
-        "mov fs, ax\n\t"
-        "pop rax\n\t"
-        "mov es, ax\n\t"
-        "pop rax\n\t"
-        "mov ds, ax\n\t"
-        "pop r15\n\t"
-        "pop r14\n\t"
-        "pop r13\n\t"
-        "pop r12\n\t"
-        "pop r11\n\t"
-        "pop r10\n\t"
-        "pop r9\n\t"
-        "pop r8\n\t"
-        "pop rbp\n\t"
-        "pop rdi\n\t"
-        "pop rsi\n\t"
-        "pop rdx\n\t"
-        "pop rcx\n\t"
-        "pop rbx\n\t"
-        "pop rax\n\t"
-
-        // 이제 트랩 프레임만 스택에 남아 있음
-        // iretq로 복귀 (RIP, CS, RFLAGS, [RSP, SS])를 자동으로 pop
-        "iretq\n\t"
-        );
-}
-__attribute__((interrupt))
 void none_handler(interrupt_frame_t* frame) {
     __asm__ __volatile__("hlt");
     lapic_eoi();
 }
-__attribute__((interrupt))
-void double_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
+void double_fault_handler(interrupt_frame_t* frame) {
     uart_print("Double Fault");
     uart_print("\nRIP=");
     uart_print_hex(frame->rip);
     uart_print("\nError Code=");
-    uart_print_hex(error_code);
+    uart_print_hex(frame->errno);
     uart_print("\nProcess id=");
     uart_print_hex(now_process->id);
     uart_print("\n");
@@ -202,13 +131,12 @@ void double_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
         __asm__ __volatile__("hlt");
     }
 }
-__attribute__((interrupt))
-void general_protection_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
+void general_protection_fault_handler(interrupt_frame_t* frame) {
     uart_print("General Protection Fault");
     uart_print("\nRIP=");
     uart_print_hex(frame->rip);
     uart_print("\nError Code=");
-    uart_print_hex(error_code);
+    uart_print_hex(frame->errno);
     uart_print("\nProcess id=");
     uart_print_hex(now_process->id);
     uart_print("\n");
@@ -216,142 +144,25 @@ void general_protection_fault_handler(interrupt_frame_t* frame, uint64_t error_c
         __asm__ __volatile__("hlt");
     }
 }
-__attribute__((interrupt))
-void stack_segment_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
+void stack_segment_fault_handler(interrupt_frame_t* frame) {
     uart_print("Stack Segment Fault");
     uart_print("\nRIP=");
     uart_print_hex(frame->rip);
     uart_print("\nError Code=");
-    uart_print_hex(error_code);
+    uart_print_hex(frame->errno);
     uart_print("\nProcess id=");
     uart_print_hex(now_process->id);
     uart_print("\n");
     while (1) {
         __asm__ __volatile__("hlt");
     }
-}
-__attribute__((naked))
-void syscall_idthandler() {
-    asm volatile(
-        // 인터럽트 진입시 트랩 프레임이 이미 스택에 있음 (rip, cs, rflags, [rsp, ss])
-        // 추가적으로 전역/일반 레지스터도 저장
-        "push rax\n\t"
-        "push rbx\n\t"
-        "push rcx\n\t"
-        "push rdx\n\t"
-        "push rsi\n\t"
-        "push rdi\n\t"
-        "push rbp\n\t"
-        "push r8\n\t"
-        "push r9\n\t"
-        "push r10\n\t"
-        "push r11\n\t"
-        "push r12\n\t"
-        "push r13\n\t"
-        "push r14\n\t"
-        "push r15\n\t"
-        "mov rax, ds\n\t"
-        "push rax\n\t"
-        "mov rax, es\n\t"
-        "push rax\n\t"
-        "mov rax, fs\n\t"
-        "push rax\n\t"
-        "mov rax, gs\n\t"
-        "push rax\n\t"
-
-        "mov rdi, rsp\n\t"
-        "call syscall_handler\n\t"
-        "pop rax\n\t"
-        "mov gs, ax\n\t"
-        "pop rax\n\t"
-        "mov fs, ax\n\t"
-        "pop rax\n\t"
-        "mov es, ax\n\t"
-        "pop rax\n\t"
-        "mov ds, ax\n\t"
-        "pop r15\n\t"
-        "pop r14\n\t"
-        "pop r13\n\t"
-        "pop r12\n\t"
-        "pop r11\n\t"
-        "pop r10\n\t"
-        "pop r9\n\t"
-        "pop r8\n\t"
-        "pop rbp\n\t"
-        "pop rdi\n\t"
-        "pop rsi\n\t"
-        "pop rdx\n\t"
-        "pop rcx\n\t"
-        "pop rbx\n\t"
-        "pop rax\n\t"
-
-        "iretq\n\t"
-        );
-}
-__attribute__((naked))
-void waiting_idthandler() {
-    asm volatile(
-        // 인터럽트 진입시 트랩 프레임이 이미 스택에 있음 (rip, cs, rflags, [rsp, ss])
-        // 추가적으로 전역/일반 레지스터도 저장
-        "push rax\n\t"
-        "push rbx\n\t"
-        "push rcx\n\t"
-        "push rdx\n\t"
-        "push rsi\n\t"
-        "push rdi\n\t"
-        "push rbp\n\t"
-        "push r8\n\t"
-        "push r9\n\t"
-        "push r10\n\t"
-        "push r11\n\t"
-        "push r12\n\t"
-        "push r13\n\t"
-        "push r14\n\t"
-        "push r15\n\t"
-        "mov rax, ds\n\t"
-        "push rax\n\t"
-        "mov rax, es\n\t"
-        "push rax\n\t"
-        "mov rax, fs\n\t"
-        "push rax\n\t"
-        "mov rax, gs\n\t"
-        "push rax\n\t"
-
-        "mov rdi, rsp\n\t"
-        "call waiting_handler\n\t"
-        "pop rax\n\t"
-        "mov gs, ax\n\t"
-        "pop rax\n\t"
-        "mov fs, ax\n\t"
-        "pop rax\n\t"
-        "mov es, ax\n\t"
-        "pop rax\n\t"
-        "mov ds, ax\n\t"
-        "pop r15\n\t"
-        "pop r14\n\t"
-        "pop r13\n\t"
-        "pop r12\n\t"
-        "pop r11\n\t"
-        "pop r10\n\t"
-        "pop r9\n\t"
-        "pop r8\n\t"
-        "pop rbp\n\t"
-        "pop rdi\n\t"
-        "pop rsi\n\t"
-        "pop rdx\n\t"
-        "pop rcx\n\t"
-        "pop rbx\n\t"
-        "pop rax\n\t"
-
-        "iretq\n\t"
-        );
 }
 void basic_callback(void* event_info,uint64_t status, uint64_t control, void* ctx) {
 	KEvent* event = (KEvent*)event_info;
     add_process(event->process_id);
     ((context_t*)GetProcess(event->process_id)->kernel_stack)->rax = status << 32ull | control;
 }
-extern "C" void waiting_handler(context_t* frame) {
+void waiting_handler(context_t* frame) {
     now_process->kernel_stack = (uint64_t*)frame;
     switch (frame->rax) {
     case 0x4:   //MSG waiting

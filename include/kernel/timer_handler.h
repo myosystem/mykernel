@@ -3,5 +3,5 @@
 #include "arch/idt.h"
 #include "util/size.h"
 extern uint64_t next_process_time;
-extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame);
+extern "C" __attribute__((noinline)) void timer_handler(context_t* frame);
 #endif // __TIMER_HANDLER_H__

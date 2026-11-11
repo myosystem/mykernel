@@ -16,7 +16,26 @@ struct idt_ptr {
 } __attribute__((packed));
 idt_entry idt[IDT_SIZE] __attribute__((aligned(16)));
 idt_ptr idt_reg;
-void set_idt_gate(int n, uint64_t handler, uint16_t selector, uint8_t flags) {
+extern "C" char isr_stubs[];
+asm(R"(
+.text
+.global isr_stubs
+.balign 16
+isr_stubs:
+.set vec, 0
+.rept 256
+    .balign 16
+    .if (vec == 8) || (vec >= 10 && vec <= 14) || (vec == 17) || (vec == 21) || (vec == 29) || (vec == 30)
+    .else
+        push 0
+    .endif
+    push vec
+    jmp isr_common
+    .set vec, vec + 1
+.endr
+)");
+void set_idt_gate(int n, uint16_t selector, uint8_t flags) {
+    uint64_t handler = (uint64_t)isr_stubs + (uint64_t)n * 16;
     idt[n].offset_low = handler & 0xFFFF;
     idt[n].offset_middle = (handler >> 16) & 0xFFFF;
     idt[n].offset_high = (handler >> 32) & 0xFFFFFFFF;

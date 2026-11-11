@@ -794,7 +794,6 @@ void XHCIController::command_completion(EventTRB ev) {
 }
 static DeviceType devices[256];
 extern vector<Controller*>* controllers;
-__attribute__((interrupt))
 void xhci_handler(interrupt_frame_t* frame) {
     //uart_print("[XHCI] handler!\n"); // 불리는지 확인
     for (int i = 0; i < controllers->size(); i++) {

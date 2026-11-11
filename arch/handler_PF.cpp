@@ -14,11 +14,10 @@ extern uint64_t forkdbg[8];
 extern uint64_t cowlog[16];
 #endif
 extern bool booting;
-__attribute__((interrupt))
-void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
+void page_fault_handler(interrupt_frame_t* frame) {
     uint64_t cr2;
     __asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
-    if (!(error_code & (1ull << 2ull))) {
+    if (!(frame->errno & (1ull << 2ull))) {
         uint64_t pml4_entry = (cr2 >> 39) & 0x1FF;
         if (PML4::PML4_POOL_GUARD_LOW < pml4_entry && pml4_entry < PML4::PML4_POOL_GUARD_HIGH) {
             virt_page_allocator->alloc_virt_page(cr2 & ~0xFFFULL, phy_page_allocator->alloc_phy_page(), VirtPageAllocator::P | VirtPageAllocator::RW | VirtPageAllocator::G);
@@ -27,7 +26,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
         }
     }
     if (now_process) {
-        if (error_code & 1) { // Present인데 PF = 권한 위반
+        if (frame->errno & 1) { // Present인데 PF = 권한 위반
             uint64_t pte = virt_page_allocator->get_pte(cr2 & ~0xFFFULL);
             if (pte != ~0ULL && (pte & VirtPageAllocator::PTE_COW)) {
 #ifdef TEST_MODE
@@ -112,7 +111,7 @@ void page_fault_handler(interrupt_frame_t* frame, uint64_t error_code) {
     uart_print("\nRIP=");
     uart_print_hex(frame->rip);
     uart_print("\nError Code=");
-    uart_print_hex(error_code);
+    uart_print_hex(frame->errno);
     if (booting)
         __asm__ __volatile__("hlt");
     uart_print("\nProcess id=");

@@ -145,6 +145,7 @@ Process::Process(uint64_t cs, uint64_t ss, Partition* partition,
     *(--kernel_stack) = 0x202;
     *(--kernel_stack) = cs;
     *(--kernel_stack) = (uint64_t)code_va_base;
+    for (int i = 0; i < 2; i++) *(--kernel_stack) = 0;
     for (int i = 0; i < 15; i++) *(--kernel_stack) = 0;
     for (int i = 0; i < 4; i++) *(--kernel_stack) = ss;
 
@@ -258,6 +259,7 @@ void init_process() {
     *(--idle_process->kernel_stack) = 0x202; // rflags
     *(--idle_process->kernel_stack) = 0x08;  // cs
     *(--idle_process->kernel_stack) = (uint64_t)idle_process->code_va_base; // rip
+    for (int i = 0; i < 2; i++) *(--idle_process->kernel_stack) = 0;
     for (int i = 0; i < 15; i++) {
         *(--idle_process->kernel_stack) = 0;
     }
@@ -350,6 +352,7 @@ void Process::run_process() {
         "pop rcx\n\t"
         "pop rbx\n\t"
         "pop rax\n\t"
+        "add rsp, 16\n\t"
         "iretq\n\t"
         :
         : [now_rsp]"a"(now_rsp)

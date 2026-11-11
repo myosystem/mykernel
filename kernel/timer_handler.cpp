@@ -7,7 +7,7 @@
 char uart_buf[1000];
 uint64_t next_process_time = 0;
 void test_xhci();
-extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame) {
+extern "C" __attribute__((noinline)) void timer_handler(context_t* frame) {
     //test_xhci();
     if (!(now_process->state & PROCESS_STATE_WAITING)) {
         now_process->kernel_stack = (uint64_t*)frame;
@@ -72,5 +72,5 @@ extern "C" __attribute__((noinline)) uint64_t* c_timer_handler(context_t* frame)
         lapic_tsc_deadline_set(1);
     }
     lapic_eoi();
-    return (uint64_t*)0;
+    return;
 }
