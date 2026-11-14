@@ -6,6 +6,7 @@
 #include "mm/allocator"
 #include "kernel/syscall.h"
 #include "kernel/timer_handler.h"
+#include "kernel/process.h"
 
 extern "C" void dispatch(context_t* frame);
 
@@ -66,7 +67,12 @@ isr_common:
 )");
 static uint64_t interrupt_list[IDT_SIZE];
 void dispatch(context_t* frame) {
+    now_process->save_sse();
+    if (!(now_process->state & PROCESS_STATE_WAITING)) {
+        now_process->kernel_stack = (uint64_t*)frame;
+    }
     ((void(*)(interrupt_frame_t*))interrupt_list[frame->vec])(frame);
+    now_process->run_process();
 }
 void set_interrupt(int n, uint64_t handler, uint16_t selector, uint8_t flags) {
     set_idt_gate(n, selector, flags);
