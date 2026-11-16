@@ -177,14 +177,53 @@ typedef struct {
 class SSEBuffer : public BufferPool<SSEBuffer, pml4_addr(PML4::PROCESS_SSE_HEAP), 512> {};
 void pinit(void* obj);
 void pdestroy(void* obj);
-class Process : public NewObject<PROCESS_QUEUE_BASE, 512, pinit, pdestroy> {
+enum Signal {
+    SIGHUP = 1,
+    SIGINT,
+    SIGQUIT,
+    SIGILL,
+    SIGTRAP,
+    SIGABRT,
+    SIGBUS,
+    SIGFPE,
+    SIGKILL,
+    SIGUSR1,
+    SIGSEGV,
+    SIGUSR2,
+    SIGPIPE,
+    SIGALRM,
+    SIGTERM,
+    SIGCHLD,
+    SIGCONT,
+    SIGSTOP,
+    SIGTSTP,
+    SIGTTIN,
+    SIGTTOU,
+    SIGURG,
+    SIGXCPU,
+    SIGXFSZ,
+    SIGVTALRM,
+    SIGPROF,
+    SIGPOLL,
+    SIGSYS,
+    SIGRTMIN,
+    SIGRTMAX = SIGRTMIN + 7,
+    SIGCOUNT
+};
+#define SIG_DFL 0
+#define SIG_IGN 1
+#define SIG_ERR (-1)
+class Process : public NewObject<PROCESS_QUEUE_BASE, 1024, pinit, pdestroy> {
 private:
     static inline uint64_t trampoline_pa = 0;
     queue<msg_t> msgq;
     volatile bool msg_lock = false;
 	queue<uint64_t> waiting_msgq; // 메시지 대기 중인 프로세스들의 PID 저장
 	vector<uint64_t> children; // 자식 프로세스들의 PID 저장
-    context_t signal_save;
+    Context* signal_save_queue;
+    uint64_t signal_handlers[SIGCOUNT] = { 0, };
+	uint64_t signals_pending = 0;
+    uint64_t run_signal(context_t* ctx, int signo);
 public:
     uint64_t cr3;
     uint64_t kernel_stack_phys;
@@ -223,7 +262,6 @@ public:
 	uint64_t exec(const char* path, const char* argv[], context_t* ctx);
     uint64_t wait();
 	uint64_t waitpid(uint64_t pid);
-    uint64_t signal(context_t* ctx);
     void save_sse();
 };
 extern queue<size_t>* process_queue;   //todo - queue를 코어 개수에 맞게 생성할 수 있도록 확장 필요

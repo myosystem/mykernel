@@ -158,13 +158,18 @@ Process::Process(uint64_t cs, uint64_t ss, Partition* partition,
         open_files.push_back(new STDOut());
         open_files.push_back(new STDOut());
     }
+    signal_save_queue = nullptr;
 }
 Process::~Process() {
     for (size_t i = 0; i < open_files.get_size(); i++) {
 		File* f = (File*)open_files[i];
 		if (f) f->close();
     }
-
+    while (signal_save_queue) {
+        auto next = (Context*)signal_save_queue->args[0];
+        delete signal_save_queue;
+        signal_save_queue = next;
+    }
     pallocator->free_all_low_pages(); // 하위 날리면 cr3 하위도 깨끗해짐
 
     mmap_entry* entry = mmap_table;
@@ -195,6 +200,7 @@ Process::~Process() {
     }
 }
 void Process::save_sse() {
+    if (!this) return;
 	__asm__ __volatile__(
         "fxsave [%[buf]]"
         :
@@ -319,7 +325,8 @@ Process* next_process() {
 }
 __attribute__((noreturn))
 void Process::run_process() {
-    tss.rsp0 = this->kernel_stack_phys + HHDM_BASE;
+    if (!this) return;
+    tss.rsp0 = (uint64_t)this->kernel_stack + sizeof(context_t);
     uint64_t now_rsp = (uint64_t)this->kernel_stack;
     __asm__ __volatile__(
 		"fxrstor [%[buf]]\n\t"
@@ -720,10 +727,77 @@ uint64_t Process::wait() {
     }
     return ~0ULL; // 오류 시 -1 반환
 }
-uint64_t Process::signal(context_t* ctx) {
-    memcpy(&signal_save, ctx, sizeof(context_t));
-    ctx->rsp -= 128;
-    return -1;
+extern uint64_t next_process_time;
+#define min(a, b) ((a) < (b) ? (a) : (b))
+uint64_t Process::run_signal(context_t* ctx, int signo) {
+    if (signo >= SIGCOUNT || signo <= 0) return -1;
+    auto exit = [&]() {
+        Process* exiting = this;
+        exiting->time_slice = (uint64_t)signo << 32;
+        exiting->~Process();
+        if (exiting->parent == (uint64_t)-1) {
+            Process::operator delete(exiting);
+        }
+        if (now_process == exiting) {
+            now_process = next_process();
+            next_process_time = tsc_get() + ms_to_ticks(now_process->time_slice);
+            uint64_t nexttime = next_process_time;
+            if (time_event->isEmpty() == false) {
+                nexttime = min(next_process_time, time_event->top().time);
+            }
+            tsc_deadline_set(nexttime);
+            now_process->run_process();
+        }
+        };
+    if (signo == SIGKILL) {
+        exit();
+        return 0;
+    }
+    if (signal_handlers[signo] == SIG_IGN) {
+        return 0;
+    }
+    else if (signal_handlers[signo] == SIG_DFL) {
+        if (SIGRTMIN <= signo && signo <= SIGRTMAX) {
+            exit();
+        }
+        switch (signo) {
+        case SIGHUP:
+        case SIGINT:
+        case SIGQUIT:
+        case SIGILL:
+        case SIGTRAP:
+        case SIGABRT:
+        case SIGBUS:
+        case SIGFPE:
+        case SIGUSR1:
+        case SIGSEGV:
+        case SIGUSR2:
+        case SIGPIPE:
+        case SIGALRM:
+        case SIGTERM:
+        case SIGXCPU:
+        case SIGXFSZ:
+        case SIGVTALRM:
+        case SIGPROF:
+        case SIGPOLL:
+        case SIGSYS:
+            exit();
+            return 0;
+        }
+        return 0;
+    }
+    else {
+        if (signo >= sizeof(signal_handlers) / sizeof(*signal_handlers)) return -1;
+        Context* new_context = new Context(*ctx);
+        new_context->args[0] = (uint64_t)signal_save_queue;
+        signal_save_queue = new_context;
+        ctx->rsp -= 128;
+        ctx->rsp &= ~15LL;
+        ctx->rip = code_va_base;
+        ctx->rdi = signo;
+        ctx->rsi = signal_handlers[signo];
+        return 0;
+    }
 }
 uint64_t get_process_count() {
     return Process::get_count();
