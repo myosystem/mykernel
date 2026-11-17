@@ -108,11 +108,6 @@ uint64_t VirtPageAllocator::alloc_virt_page(uint64_t va, uint64_t pa, uint64_t f
 uint64_t VirtPageAllocator::alloc_virt_pages(uint64_t va, uint64_t size, uint64_t flags) {
     if ((va & 0xFFF) || (size & 0xFFF)) return ~0ULL; // 정렬 불량
     uint64_t pages = (size + 4095) / 4096;
-    uart_print("size:");
-    uart_print(size);
-    uart_print("\npages:");
-    uart_print(pages);
-    uart_print("\n");
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t pa = phy_allocator->alloc_phy_page();
         if (alloc_virt_page(va + i * 4096, pa, flags) == ~0ULL) {

@@ -3,6 +3,7 @@
 #include "util/util.h"
 #include "debug/log.h"
 #include "arch/lapic.h"
+#include "kernel/stack.h"
 #ifdef TEST_MODE
 uint64_t forkdbg[8] = {0,};
 uint64_t cowlog[16] = {0,};
@@ -121,8 +122,8 @@ void pinit(void* obj) {
     // 한 번만
     process->pallocator = new (process->allocator_buffer) VirtPageAllocator();
     process->cr3 = phy_page_allocator->alloc_phy_page() + HHDM_BASE;
-    process->kernel_stack_phys = phy_page_allocator->alloc_phy_page() + PageSize;
     process->mmap_table = nullptr;
+	process->kernel_stack = (uint64_t*)new Kernel_Stack;
 
     uint64_t lcr3 = virt_page_allocator->getCr3() + HHDM_BASE;
     memset((void*)(process->cr3), 0, PageSize / 2);                              // 하위 절반 초기화
@@ -139,7 +140,6 @@ Process::Process(uint64_t cs, uint64_t ss, Partition* partition,
     user_stack_bottom = 0x00007FFFFFF000;
     user_stack_top = user_stack_bottom - PageSize * 4;
     console_pid = -1;
-    kernel_stack = (uint64_t*)(kernel_stack_phys + HHDM_BASE);
     *(--kernel_stack) = ss;
     *(--kernel_stack) = user_stack_bottom;
     *(--kernel_stack) = 0x202;
@@ -210,7 +210,7 @@ void Process::save_sse() {
 void pdestroy(void* obj) {
     Process* process = (Process*)obj;
     phy_page_allocator->put_page(process->cr3 - HHDM_BASE);
-    phy_page_allocator->put_page(process->kernel_stack_phys - PageSize);
+	delete (Kernel_Stack*)process->kernel_stack;
     delete process->sse_buffer;
 }
 void Process::addCode(void* code_addr) {
@@ -253,8 +253,7 @@ void init_process() {
     idle_process->cr3 = virt_page_allocator->getCr3() + HHDM_BASE;
     idle_process->state = 1;
     idle_process->code_va_base = (uint64_t)idle_process_func;
-    idle_process->kernel_stack_phys = phy_page_allocator->alloc_phy_page() + PageSize;
-    idle_process->kernel_stack = (uint64_t*)(idle_process->kernel_stack_phys + HHDM_BASE);
+    idle_process->kernel_stack = (uint64_t*)new Kernel_Stack;
     idle_process->user_stack_bottom = (uint64_t)idle_process->kernel_stack;
     idle_process->user_stack_top = (uint64_t)idle_process->kernel_stack - PageSize;
     idle_process->pallocator = virt_page_allocator; // 재사용
@@ -325,7 +324,6 @@ Process* next_process() {
 }
 __attribute__((noreturn))
 void Process::run_process() {
-    if (!this) return;
     tss.rsp0 = (uint64_t)this->kernel_stack + sizeof(context_t);
     uint64_t now_rsp = (uint64_t)this->kernel_stack;
     __asm__ __volatile__(

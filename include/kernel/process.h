@@ -226,7 +226,6 @@ private:
     uint64_t run_signal(context_t* ctx, int signo);
 public:
     uint64_t cr3;
-    uint64_t kernel_stack_phys;
     uint64_t user_stack_bottom;
     uint64_t user_stack_top;
     uint64_t time_slice;
