@@ -178,6 +178,7 @@ bool VirtPageAllocator::change_flags(uint64_t va, uint64_t flags) {
     uint64_t* pte = (uint64_t*)(HHDM_BASE + (*pde & ~0xFFFULL)) + ((va >> 12) & 0x1FF);
     if (!(*pte & P)) { return false; } // 미할당
     *pte = (*pte & PTE_ADDR_MASK) | (flags & ~PTE_ADDR_MASK);
+    invlpg((void*)va);
     return true;
 }
 bool VirtPageAllocator::copy(VirtPageAllocator& source, uint64_t start, uint64_t size) {
