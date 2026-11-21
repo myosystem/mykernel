@@ -257,6 +257,7 @@ public:
 	void lock_msg()   { while (__atomic_test_and_set(&msg_lock, __ATOMIC_ACQUIRE)) __asm__ __volatile__("pause"); }
 	void unlock_msg() { __atomic_clear(&msg_lock, __ATOMIC_RELEASE); }
     void run_process();
+    void enter_process();
     uint64_t fork(context_t* ctx);
 	uint64_t exec(const char* path, const char* argv[], context_t* ctx);
     uint64_t wait();

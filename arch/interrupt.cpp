@@ -66,10 +66,8 @@ isr_common:
     iretq
 )");
 static uint64_t interrupt_list[IDT_SIZE];
-extern bool booting;
 void dispatch(context_t* frame) {
-    if (booting) { ((void(*)(interrupt_frame_t*))interrupt_list[frame->vec])(frame); return; }
-    now_process->save_sse();
+    if(!now_process) { ((void(*)(interrupt_frame_t*))interrupt_list[frame->vec])(frame); return; }
     if (!(now_process->state & PROCESS_STATE_WAITING)) {
         now_process->kernel_stack = (uint64_t*)frame;
     }
@@ -77,7 +75,7 @@ void dispatch(context_t* frame) {
     if (!(now_process->state & PROCESS_STATE_WAITING)) {
         now_process->kernel_stack = (uint64_t*)frame;
     }
-    now_process->run_process();
+    now_process->enter_process();
 }
 void set_interrupt(int n, uint64_t handler, uint16_t selector, uint8_t flags) {
     set_idt_gate(n, selector, flags);

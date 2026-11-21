@@ -244,6 +244,7 @@ void init_process() {
     process_queue = new (process_queue_buf) queue<size_t>();
 	time_event = new (time_event_buf) HeapTree<KEvent>((void*)0xFFFF840000000000);
     xhci_event = new (xhci_event_buf) vector<KEvent>;
+    Kernel_Stack::init();
     //virt_page_allocator->free_all_low_pages();
     for (uint64_t i = 256; i <= 268; i++) {
         volatile uint64_t* pml4_entry_addr = (volatile uint64_t*)(0xFFFF000000000000 + (i << 39));
@@ -362,6 +363,42 @@ void Process::run_process() {
         :
         : [now_rsp]"a"(now_rsp)
     );
+    __builtin_unreachable();
+}
+__attribute__((noreturn))
+void Process::enter_process() {
+    tss.rsp0 = (uint64_t)this->kernel_stack + sizeof(context_t);
+    uint64_t now_rsp = (uint64_t)this->kernel_stack;
+    __asm__ __volatile__(
+        "mov rsp, %[now_rsp]\n\t"
+        "pop rax\n\t"
+        "mov gs, ax\n\t"
+        "pop rax\n\t"
+        "mov fs, ax\n\t"
+        "pop rax\n\t"
+        "mov es, ax\n\t"
+        "pop rax\n\t"
+        "mov ds, ax\n\t"
+        "pop r15\n\t"
+        "pop r14\n\t"
+        "pop r13\n\t"
+        "pop r12\n\t"
+        "pop r11\n\t"
+        "pop r10\n\t"
+        "pop r9\n\t"
+        "pop r8\n\t"
+        "pop rbp\n\t"
+        "pop rdi\n\t"
+        "pop rsi\n\t"
+        "pop rdx\n\t"
+        "pop rcx\n\t"
+        "pop rbx\n\t"
+        "pop rax\n\t"
+        "add rsp, 16\n\t"
+        "iretq\n\t"
+        :
+    : [now_rsp] "a"(now_rsp)
+        );
     __builtin_unreachable();
 }
 mmap_entry* Process::isAddrInMMap(uint64_t va) const {
